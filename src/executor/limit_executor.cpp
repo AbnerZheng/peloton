@@ -14,7 +14,7 @@
 
 #include "planner/limit_plan.h"
 #include "common/logger.h"
-#include "type/types.h"
+#include "common/internal_types.h"
 #include "executor/logical_tile.h"
 
 namespace peloton {
@@ -33,7 +33,7 @@ LimitExecutor::LimitExecutor(const planner::AbstractPlan *node,
  * @return true on success, false otherwise.
  */
 bool LimitExecutor::DInit() {
-  PL_ASSERT(children_.size() == 1);
+  PELOTON_ASSERT(children_.size() == 1);
 
   num_skipped_ = 0;
   num_returned_ = 0;

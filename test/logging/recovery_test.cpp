@@ -58,7 +58,7 @@
 //   std::srand(std::time(nullptr));
 //   const catalog::Schema *schema = table->GetSchema();
 //   // Ensure that the tile group is as expected.
-//   PL_ASSERT(schema->GetColumnCount() == 4);
+//   PELOTON_ASSERT(schema->GetColumnCount() == 4);
 
 //   // Insert tuples into tile_group.
 //   const bool allocate = true;
@@ -310,17 +310,17 @@
 //   EXPECT_EQ(tg_header->GetEndCommitId(5), MAX_CID);
 
 //   type::Value rval0 = (recovery_table->GetTileGroupById(100)->GetValue(5, 0));
-//   type::CmpBool cmp0 = (val0.CompareEquals(rval0));
-//   EXPECT_TRUE(cmp0 == type::CmpBool::TRUE);
+//   CmpBool cmp0 = (val0.CompareEquals(rval0));
+//   EXPECT_TRUE(cmp0 == CmpBool::CmpTrue);
 //   type::Value rval1 = (recovery_table->GetTileGroupById(100)->GetValue(5, 1));
-//   type::CmpBool cmp1 = (val1.CompareEquals(rval1));
-//   EXPECT_TRUE(cmp1 == type::CmpBool::TRUE);
+//   CmpBool cmp1 = (val1.CompareEquals(rval1));
+//   EXPECT_TRUE(cmp1 == CmpBool::CmpTrue);
 //   type::Value rval2 = (recovery_table->GetTileGroupById(100)->GetValue(5, 2));
-//   type::CmpBool cmp2 = (val2.CompareEquals(rval2));
-//   EXPECT_TRUE(cmp2 == type::CmpBool::TRUE);
+//   CmpBool cmp2 = (val2.CompareEquals(rval2));
+//   EXPECT_TRUE(cmp2 == CmpBool::CmpTrue);
 //   type::Value rval3 = (recovery_table->GetTileGroupById(100)->GetValue(5, 3));
-//   type::CmpBool cmp3 = (val3.CompareEquals(rval3));
-//   EXPECT_TRUE(cmp3 == type::CmpBool::TRUE);
+//   CmpBool cmp3 = (val3.CompareEquals(rval3));
+//   EXPECT_TRUE(cmp3 == CmpBool::CmpTrue);
 
 //   EXPECT_EQ(recovery_table->GetTupleCount(), 1);
 //   EXPECT_EQ(recovery_table->GetTileGroupCount(), 2);
@@ -364,17 +364,17 @@
 //   EXPECT_EQ(tg_header->GetEndCommitId(4), test_commit_id);
 
 //   type::Value rval0 = (recovery_table->GetTileGroupById(100)->GetValue(5, 0));
-//   type::CmpBool cmp0 = (val0.CompareEquals(rval0));
-//   EXPECT_TRUE(cmp0 == type::CmpBool::TRUE);
+//   CmpBool cmp0 = (val0.CompareEquals(rval0));
+//   EXPECT_TRUE(cmp0 == CmpBool::CmpTrue);
 //   type::Value rval1 = (recovery_table->GetTileGroupById(100)->GetValue(5, 1));
-//   type::CmpBool cmp1 = (val1.CompareEquals(rval1));
-//   EXPECT_TRUE(cmp1 == type::CmpBool::TRUE);
+//   CmpBool cmp1 = (val1.CompareEquals(rval1));
+//   EXPECT_TRUE(cmp1 == CmpBool::CmpTrue);
 //   type::Value rval2 = (recovery_table->GetTileGroupById(100)->GetValue(5, 2));
-//   type::CmpBool cmp2 = (val2.CompareEquals(rval2));
-//   EXPECT_TRUE(cmp2 == type::CmpBool::TRUE);
+//   CmpBool cmp2 = (val2.CompareEquals(rval2));
+//   EXPECT_TRUE(cmp2 == CmpBool::CmpTrue);
 //   type::Value rval3 = (recovery_table->GetTileGroupById(100)->GetValue(5, 3));
-//   type::CmpBool cmp3 = (val3.CompareEquals(rval3));
-//   EXPECT_TRUE(cmp3 == type::CmpBool::TRUE);
+//   CmpBool cmp3 = (val3.CompareEquals(rval3));
+//   EXPECT_TRUE(cmp3 == CmpBool::CmpTrue);
 
 //   EXPECT_EQ(recovery_table->GetTupleCount(), 0);
 //   EXPECT_EQ(recovery_table->GetTileGroupCount(), 2);

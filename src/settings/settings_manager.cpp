@@ -12,6 +12,7 @@
 
 #include <gflags/gflags.h>
 
+#include "type/type_id.h"
 #include "catalog/settings_catalog.h"
 #include "common/exception.h"
 #include "concurrency/transaction_manager_factory.h"
@@ -32,6 +33,10 @@ namespace settings {
 
 int32_t SettingsManager::GetInt(SettingId id) {
   return GetInstance().GetValue(id).GetAs<int32_t>();
+}
+
+double SettingsManager::GetDouble(SettingId id) {
+  return GetInstance().GetValue(id).GetAs<double>();
 }
 
 bool SettingsManager::GetBool(SettingId id) {
@@ -84,20 +89,30 @@ void SettingsManager::InitializeCatalog() {
 }
 
 const std::string SettingsManager::GetInfo() const {
-  const uint32_t box_width = 60;
+  const uint32_t box_width = 72;
   const std::string title = "PELOTON SETTINGS";
 
   std::string info;
-  info.append(StringUtil::Format("%*s\n", box_width/2 + title.length()/2, title.c_str()));
+  info.append(StringUtil::Format("%*s\n", box_width / 2 + title.length() / 2,
+                                 title.c_str()));
   info.append(StringUtil::Repeat("=", box_width)).append("\n");
 
-  info.append(StringUtil::Format("%28s:   %-28i\n", "Port", GetInt(SettingId::port)));
-  info.append(StringUtil::Format("%28s:   %-28s\n", "Socket Family", GetString(SettingId::socket_family).c_str()));
-  info.append(StringUtil::Format("%28s:   %-28s\n", "Statistics", GetInt(SettingId::stats_mode) ? "enabled" : "disabled"));
-  info.append(StringUtil::Format("%28s:   %-28i\n", "Max Connections", GetInt(SettingId::max_connections)));
-  info.append(StringUtil::Format("%28s:   %-28s\n", "Index Tuner", GetBool(SettingId::index_tuner) ? "enabled" : "disabled"));
-  info.append(StringUtil::Format("%28s:   %-28s\n", "Layout Tuner", GetBool(SettingId::layout_tuner) ? "enabled" : "disabled"));
-  info.append(StringUtil::Format("%28s:   %-28s\n", "Code-generation", GetBool(SettingId::codegen) ? "enabled" : "disabled"));
+  // clang-format off
+  info.append(StringUtil::Format("%34s:   %-34i\n", "Port", GetInt(SettingId::port)));
+  info.append(StringUtil::Format("%34s:   %-34s\n", "Socket Family", GetString(SettingId::socket_family).c_str()));
+  info.append(StringUtil::Format("%34s:   %-34s\n", "Statistics", GetInt(SettingId::stats_mode) ? "enabled" : "disabled"));
+  info.append(StringUtil::Format("%34s:   %-34i\n", "Max Connections", GetInt(SettingId::max_connections)));
+  info.append(StringUtil::Format("%34s:   %-34s\n", "Index Tuner", GetBool(SettingId::index_tuner) ? "enabled" : "disabled"));
+  info.append(StringUtil::Format("%34s:   %-34s\n", "Layout Tuner", GetBool(SettingId::layout_tuner) ? "enabled" : "disabled"));
+  info.append(StringUtil::Format("%34s:   (queue size %i, %i threads)\n", "Worker Pool", GetInt(SettingId::monoqueue_task_queue_size), GetInt(SettingId::monoqueue_worker_pool_size)));
+  info.append(StringUtil::Format("%34s:   %-34s\n", "Parallel Query Execution", GetBool(SettingId::parallel_execution) ? "enabled" : "disabled"));
+  info.append(StringUtil::Format("%34s:   %-34i\n", "Min. Parallel Table Scan Size", GetInt(SettingId::min_parallel_table_scan_size)));
+  info.append(StringUtil::Format("%34s:   %-34s\n", "Code-generation", GetBool(SettingId::codegen) ? "enabled" : "disabled"));
+  info.append(StringUtil::Format("%34s:   %-34s\n", "Print IR Statistics", GetBool(SettingId::print_ir_stats) ? "enabled" : "disabled"));
+  info.append(StringUtil::Format("%34s:   %-34s\n", "Dump IR", GetBool(SettingId::dump_ir) ? "enabled" : "disabled"));
+  info.append(StringUtil::Format("%34s:   %-34i\n", "Optimization Timeout", GetInt(SettingId::task_execution_timeout)));
+  info.append(StringUtil::Format("%34s:   %-34i\n", "Number of GC threads", GetInt(SettingId::gc_num_threads)));
+  // clang-format on
 
   return StringBoxUtil::Box(info);
 }
@@ -108,10 +123,25 @@ void SettingsManager::DefineSetting(SettingId id, const std::string &name,
                                     const type::Value &value,
                                     const std::string &description,
                                     const type::Value &default_value,
+                                    const type::Value &min_value,
+                                    const type::Value &max_value,
                                     bool is_mutable, bool is_persistent) {
   if (settings_.find(id) != settings_.end()) {
     throw SettingsException("settings " + name + " already exists");
   }
+
+  // Only below types support min-max bound checking
+  if (value.GetTypeId() == type::TypeId::INTEGER ||
+      value.GetTypeId() == type::TypeId::SMALLINT ||
+      value.GetTypeId() == type::TypeId::TINYINT ||
+      value.GetTypeId() == type::TypeId::DECIMAL) {
+    if (!value.CompareBetweenInclusive(min_value, max_value))
+      throw SettingsException("Value given for \"" + name +
+                              "\" is not in its min-max bounds (" +
+                              min_value.ToString() + "-" +
+                              max_value.ToString() + ")");
+  }
+
   settings_.emplace(id, Param(name, value, description, default_value,
                               is_mutable, is_persistent));
 }
@@ -160,12 +190,12 @@ SettingsManager::SettingsManager() {
   catalog_initialized_ = false;
   pool_.reset(new type::EphemeralPool());
 
-  // This will expand to invoke SettingsManager::DefineSetting on
-  // all of the settings defined in settings.h. See settings_macro.h.
-  #define __SETTING_DEFINE__
-  #include "settings/settings_macro.h"
-  #include "settings/settings.h"
-  #undef __SETTING_DEFINE__
+// This will expand to invoke SettingsManager::DefineSetting on
+// all of the settings defined in settings.h. See settings_macro.h.
+#define __SETTING_DEFINE__
+#include "settings/settings_macro.h"
+#include "settings/settings.h"
+#undef __SETTING_DEFINE__
 }
 
 }  // namespace settings

@@ -6,7 +6,7 @@
 //
 // Identification: src/include/storage/data_table.h
 //
-// Copyright (c) 2015-16, Carnegie Mellon University Database Group
+// Copyright (c) 2015-2018, Carnegie Mellon University Database Group
 //
 //===----------------------------------------------------------------------===//
 
@@ -18,12 +18,14 @@
 #include <queue>
 #include <set>
 
+#include "common/container/lock_free_array.h"
 #include "common/item_pointer.h"
 #include "common/platform.h"
-#include "container/lock_free_array.h"
+#include "common/container/lock_free_array.h"
 #include "index/index.h"
 #include "storage/abstract_table.h"
 #include "storage/indirection_array.h"
+#include "storage/layout.h"
 #include "trigger/trigger.h"
 
 //===--------------------------------------------------------------------===//
@@ -34,25 +36,30 @@ extern std::vector<peloton::oid_t> sdbench_column_ids;
 
 namespace peloton {
 
-namespace brain {
+namespace tuning {
 class Sample;
-}
+}  // namespace indextuner
 
 namespace catalog {
 class ForeignKey;
-}
+class Catalog;
+}  // namespace catalog
+
+namespace executor {
+class ExecutorContext;
+}  // namespace executor
 
 namespace index {
 class Index;
-}
+}  // namespace index
 
 namespace logging {
 class LogManager;
-}
+}  // namespace logging
 
 namespace concurrency {
 class TransactionContext;
-}
+}  // namespace concurrency
 
 namespace storage {
 
@@ -77,6 +84,7 @@ class DataTable : public AbstractTable {
   friend class TileGroup;
   friend class TileGroupFactory;
   friend class TableFactory;
+  friend class catalog::Catalog;
   friend class logging::LogManager;
 
   DataTable() = delete;
@@ -118,14 +126,16 @@ class DataTable : public AbstractTable {
   // index_entry_ptr.
   ItemPointer InsertTuple(const Tuple *tuple,
                           concurrency::TransactionContext *transaction,
-                          ItemPointer **index_entry_ptr = nullptr);
+                          ItemPointer **index_entry_ptr = nullptr,
+                          bool check_fk = true);
   // designed for tables without primary key. e.g., output table used by
   // aggregate_executor.
   ItemPointer InsertTuple(const Tuple *tuple);
 
   // Insert tuple with ItemPointer provided explicitly
   bool InsertTuple(const AbstractTuple *tuple, ItemPointer location,
-      concurrency::TransactionContext *transaction, ItemPointer **index_entry_ptr);
+      concurrency::TransactionContext *transaction, ItemPointer **index_entry_ptr,
+      bool check_fk = true);
 
   //===--------------------------------------------------------------------===//
   // TILE GROUP
@@ -147,7 +157,7 @@ class DataTable : public AbstractTable {
   size_t GetTileGroupCount() const;
 
   // Get a tile group with given layout
-  TileGroup *GetTileGroupWithLayout(const column_map_type &partitioning);
+  TileGroup *GetTileGroupWithLayout(std::shared_ptr<const Layout> layout);
 
   //===--------------------------------------------------------------------===//
   // TRIGGER
@@ -188,10 +198,15 @@ class DataTable : public AbstractTable {
   const std::vector<std::set<oid_t>> &GetIndexColumns() const {
     return indexes_columns_;
   }
-
   //===--------------------------------------------------------------------===//
   // FOREIGN KEYS
   //===--------------------------------------------------------------------===//
+
+  bool CheckForeignKeySrcAndCascade(storage::Tuple *prev_tuple, 
+                                    storage::Tuple *new_tuple,
+                                    concurrency::TransactionContext *transaction,
+                                    executor::ExecutorContext *context,
+                                    bool is_update);
 
   void AddForeignKey(catalog::ForeignKey *key);
 
@@ -201,9 +216,11 @@ class DataTable : public AbstractTable {
 
   size_t GetForeignKeyCount() const;
 
-  void RegisterForeignKeySource(const std::string &source_table_name);
+  void RegisterForeignKeySource(catalog::ForeignKey *key);
 
-  void RemoveForeignKeySource(const std::string &source_table_name);
+  size_t GetForeignKeySrcCount() const;
+
+  catalog::ForeignKey *GetForeignKeySrc(const size_t) const;
 
   //===--------------------------------------------------------------------===//
   // TRANSFORMERS
@@ -232,23 +249,31 @@ class DataTable : public AbstractTable {
   // LAYOUT TUNER
   //===--------------------------------------------------------------------===//
 
-  void RecordLayoutSample(const brain::Sample &sample);
+  void RecordLayoutSample(const tuning::Sample &sample);
 
-  std::vector<brain::Sample> GetLayoutSamples();
+  std::vector<tuning::Sample> GetLayoutSamples();
 
   void ClearLayoutSamples();
 
-  void SetDefaultLayout(const column_map_type &layout);
+  void SetDefaultLayout(std::shared_ptr<const Layout> new_layout) {
+    PELOTON_ASSERT(new_layout->GetColumnCount() == schema->GetColumnCount());
+    default_layout_ = new_layout;
+  }
 
-  column_map_type GetDefaultLayout() const;
+  void ResetDefaultLayout(LayoutType type = LayoutType::ROW) {
+    PELOTON_ASSERT((type == LayoutType::ROW) || (type == LayoutType::COLUMN));
+    default_layout_ = std::shared_ptr<const Layout>(
+        new const Layout(schema->GetColumnCount(), type));
+  }
+  const Layout &GetDefaultLayout() const;
 
   //===--------------------------------------------------------------------===//
   // INDEX TUNER
   //===--------------------------------------------------------------------===//
 
-  void RecordIndexSample(const brain::Sample &sample);
+  void RecordIndexSample(const tuning::Sample &sample);
 
-  std::vector<brain::Sample> GetIndexSamples();
+  std::vector<tuning::Sample> GetIndexSamples();
 
   void ClearIndexSamples();
 
@@ -268,8 +293,6 @@ class DataTable : public AbstractTable {
 
   bool HasForeignKeys() const { return (foreign_keys_.empty() == false); }
 
-  std::map<oid_t, oid_t> GetColumnMapStats();
-
   // try to insert into all indexes.
   // the last argument is the index entry in primary index holding the new
   // tuple.
@@ -277,8 +300,16 @@ class DataTable : public AbstractTable {
                        concurrency::TransactionContext *transaction,
                        ItemPointer **index_entry_ptr);
 
+  inline static size_t GetActiveTileGroupCount() {
+    return default_active_tilegroup_count_;
+  }
+
   static void SetActiveTileGroupCount(const size_t active_tile_group_count) {
     default_active_tilegroup_count_ = active_tile_group_count;
+  }
+
+  inline static size_t GetActiveIndirectionArrayCount() {
+    return default_active_indirection_array_count_;
   }
 
   static void SetActiveIndirectionArrayCount(
@@ -333,14 +364,29 @@ class DataTable : public AbstractTable {
                                 ItemPointer *index_entry_ptr);
 
   // check the foreign key constraints
-  bool CheckForeignKeyConstraints(const AbstractTuple *tuple);
+  bool CheckForeignKeyConstraints(const AbstractTuple *tuple,
+                                  concurrency::TransactionContext *transaction);
 
- public:
-  static size_t default_active_tilegroup_count_;
+  //===--------------------------------------------------------------------===//
+  // LAYOUT HELPERS
+  //===--------------------------------------------------------------------===//
 
-  static size_t default_active_indirection_array_count_;
+  // Set the current_layout_oid_ to the given value if the current value
+  // is less than new_layout_oid. Return true on success.
+  // To be used for recovery.
+  bool SetCurrentLayoutOid(oid_t new_layout_oid);
+
+  // Performs an atomic increment on the current_layout_oid_
+  // and returns the incremented value.
+  oid_t GetNextLayoutOid() { return ++current_layout_oid_; }
 
  private:
+  //===--------------------------------------------------------------------===//
+  // STATIC MEMBERS
+  //===--------------------------------------------------------------------===//
+  static size_t default_active_tilegroup_count_;
+  static size_t default_active_indirection_array_count_;
+
   //===--------------------------------------------------------------------===//
   // MEMBERS
   //===--------------------------------------------------------------------===//
@@ -379,8 +425,10 @@ class DataTable : public AbstractTable {
   // CONSTRAINTS
   // fk constraints for which this table is the source
   std::vector<catalog::ForeignKey *> foreign_keys_;
-  // names of tables for which this table's PK is the foreign key sink
-  std::vector<std::string> foreign_key_sources_;
+  // fk constraints for which this table is the sink
+  // The complete information is stored so no need to lookup the table
+  // everytime there is a constraint check
+  std::vector<catalog::ForeignKey *> foreign_key_sources_;
 
   // has a primary key ?
   std::atomic<bool> has_primary_key_ = ATOMIC_VAR_INIT(false);
@@ -395,6 +443,10 @@ class DataTable : public AbstractTable {
   // dirty flag. for detecting whether the tile group has been used.
   bool dirty_ = false;
 
+  // Last used layout_oid. Used while creating new layouts
+  // Initialized to COLUMN_STORE_OID since its the highest predefined value.
+  std::atomic<oid_t> current_layout_oid_;
+
   //===--------------------------------------------------------------------===//
   // TUNING MEMBERS
   //===--------------------------------------------------------------------===//
@@ -402,17 +454,14 @@ class DataTable : public AbstractTable {
   // adapt table
   bool adapt_table_ = true;
 
-  // default partition map for table
-  column_map_type default_partition_;
-
   // samples for layout tuning
-  std::vector<brain::Sample> layout_samples_;
+  std::vector<tuning::Sample> layout_samples_;
 
   // layout samples mutex
   std::mutex layout_samples_mutex_;
 
   // samples for layout tuning
-  std::vector<brain::Sample> index_samples_;
+  std::vector<tuning::Sample> index_samples_;
 
   // index samples mutex
   std::mutex index_samples_mutex_;

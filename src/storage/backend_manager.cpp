@@ -9,6 +9,7 @@
 // Copyright (c) 2015-16, Carnegie Mellon University Database Group
 //
 //===----------------------------------------------------------------------===//
+#include "storage/backend_manager.h"
 
 #include <cpuid.h>
 #include <errno.h>
@@ -27,9 +28,7 @@
 #include "common/exception.h"
 #include "common/logger.h"
 #include "common/macros.h"
-#include "type/types.h"
-// #include "logging/logging_util.h"
-#include "storage/backend_manager.h"
+#include "common/internal_types.h"
 
 //===--------------------------------------------------------------------===//
 // GUC Variables
@@ -111,7 +110,7 @@ int is_cpu_genuine_intel(void) {
     unsigned cpuinfo[3];
   } vendor;
 
-  PL_MEMSET(&vendor, 0, sizeof(vendor));
+  PELOTON_MEMSET(&vendor, 0, sizeof(vendor));
 
   cpuid(0x0, 0x0, cpuinfo);
 

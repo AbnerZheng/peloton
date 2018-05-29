@@ -21,7 +21,7 @@
 #include "storage/tile.h"
 #include "storage/tuple.h"
 #include "type/abstract_pool.h"
-#include "type/types.h"
+#include "common/internal_types.h"
 #include "type/value.h"
 
 namespace peloton {
@@ -30,27 +30,35 @@ namespace codegen {
 void Updater::Init(storage::DataTable *table,
                    executor::ExecutorContext *executor_context,
                    Target *target_vector, uint32_t target_vector_size) {
-  PL_ASSERT(table != nullptr && executor_context != nullptr&&
+  PELOTON_ASSERT(table != nullptr && executor_context != nullptr&&
             target_vector != nullptr);
   table_ = table;
   executor_context_ = executor_context;
   // Target list is kept since it is required at a new version update
   target_list_ =
       new TargetList(target_vector, target_vector + target_vector_size);
+
+  statement_write_set_ = new WriteSet();
 }
 
 char *Updater::GetDataPtr(uint32_t tile_group_id, uint32_t tuple_offset) {
   auto tile_group = table_->GetTileGroupById(tile_group_id);
 
-  // Get the tile offset assuming that it is still in a tuple format
-  oid_t tile_offset, tile_column_offset;
-  tile_group->LocateTileAndColumn(0, tile_offset, tile_column_offset);
-  tile_ = tile_group->GetTileReference(tile_offset);
+  // Get the tile offset assuming that it is still a row store
+  // Hence the Tile offset is 0.
+  UNUSED_ATTRIBUTE const auto &layout = tile_group->GetLayout();
+  PELOTON_ASSERT(layout.IsRowStore());
+  tile_ = tile_group->GetTileReference(0);
   return tile_->GetTupleLocation(tuple_offset);
 }
 
 char *Updater::Prepare(uint32_t tile_group_id, uint32_t tuple_offset) {
-  PL_ASSERT(table_ != nullptr && executor_context_ != nullptr);
+  PELOTON_ASSERT(table_ != nullptr && executor_context_ != nullptr);
+
+  if (IsInStatementWriteSet(ItemPointer(tile_group_id, tuple_offset))) {
+    return nullptr;
+  }
+  
   auto *txn = executor_context_->GetTransaction();
   auto tile_group = table_->GetTileGroupById(tile_group_id).get();
   auto *tile_group_header = tile_group->GetHeader();
@@ -74,7 +82,13 @@ char *Updater::Prepare(uint32_t tile_group_id, uint32_t tuple_offset) {
 }
 
 char *Updater::PreparePK(uint32_t tile_group_id, uint32_t tuple_offset) {
-  PL_ASSERT(table_ != nullptr && executor_context_ != nullptr);
+
+  PELOTON_ASSERT(table_ != nullptr && executor_context_ != nullptr);
+
+  if (IsInStatementWriteSet(ItemPointer(tile_group_id, tuple_offset))) {
+    return nullptr;
+  }
+
   auto *txn = executor_context_->GetTransaction();
   auto tile_group = table_->GetTileGroupById(tile_group_id).get();
   auto *tile_group_header = tile_group->GetHeader();
@@ -100,6 +114,7 @@ char *Updater::PreparePK(uint32_t tile_group_id, uint32_t tuple_offset) {
   }
   auto &txn_manager = concurrency::TransactionManagerFactory::GetInstance();
   txn_manager.PerformDelete(txn, old_location, empty_location);
+  AddToStatementWriteSet(empty_location);
 
   // Get the tuple data pointer for a new version
   new_location_ = table_->GetEmptyTupleSlot(nullptr);
@@ -108,12 +123,12 @@ char *Updater::PreparePK(uint32_t tile_group_id, uint32_t tuple_offset) {
 
 peloton::type::AbstractPool *Updater::GetPool() {
   // This should be called after Prepare() or PreparePK()
-  PL_ASSERT(tile_);
+  PELOTON_ASSERT(tile_);
   return tile_->GetPool();
 }
 
 void Updater::Update() {
-  PL_ASSERT(table_ != nullptr && executor_context_ != nullptr);
+  PELOTON_ASSERT(table_ != nullptr && executor_context_ != nullptr);
   LOG_TRACE("Updating tuple <%u, %u> from table '%s' (db ID: %u, table ID: %u)",
             old_location_.block, old_location_.offset,
             table_->GetName().c_str(), table_->GetDatabaseOid(),
@@ -122,10 +137,11 @@ void Updater::Update() {
   auto tile_group = table_->GetTileGroupById(old_location_.block).get();
   auto *tile_group_header = tile_group->GetHeader();
   auto &txn_manager = concurrency::TransactionManagerFactory::GetInstance();
-
   // Either update in-place
   if (is_owner_ == true) {
     txn_manager.PerformUpdate(txn, old_location_);
+    // we do not need to add any item pointer to statement-level write set
+    // here, because we do not generate any new version
     executor_context_->num_processed++;
     return;
   }
@@ -143,11 +159,12 @@ void Updater::Update() {
     return;
   }
   txn_manager.PerformUpdate(txn, old_location_, new_location_);
+  AddToStatementWriteSet(new_location_);
   executor_context_->num_processed++;
 }
 
 void Updater::UpdatePK() {
-  PL_ASSERT(table_ != nullptr && executor_context_ != nullptr);
+  PELOTON_ASSERT(table_ != nullptr && executor_context_ != nullptr);
   LOG_TRACE("Updating tuple <%u, %u> from table '%s' (db ID: %u, table ID: %u)",
             old_location_.block, old_location_.offset,
             table_->GetName().c_str(), table_->GetDatabaseOid(),
@@ -166,6 +183,7 @@ void Updater::UpdatePK() {
     return;
   }
   txn_manager.PerformInsert(txn, new_location_, index_entry_ptr);
+  AddToStatementWriteSet(new_location_);
   executor_context_->num_processed++;
 }
 
@@ -173,6 +191,7 @@ void Updater::TearDown() {
   // Updater object does not destruct its own data structures
   tile_.reset();
   delete target_list_;
+  delete statement_write_set_;
 }
 
 }  // namespace codegen

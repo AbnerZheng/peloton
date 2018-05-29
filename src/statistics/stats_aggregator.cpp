@@ -10,15 +10,14 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include <cinttypes>
 #include "statistics/stats_aggregator.h"
+#include <cinttypes>
 
 #include "catalog/catalog.h"
 #include "catalog/database_metrics_catalog.h"
-#include "catalog/table_metrics_catalog.h"
-#include "catalog/index_metrics_catalog.h"
-#include "catalog/query_metrics_catalog.h"
+#include "catalog/system_catalogs.h"
 #include "concurrency/transaction_manager_factory.h"
+#include "index/index.h"
 #include "storage/storage_manager.h"
 #include "type/ephemeral_pool.h"
 
@@ -133,8 +132,6 @@ void StatsAggregator::UpdateQueryMetrics(int64_t time_stamp,
                                          concurrency::TransactionContext *txn) {
   // Get the target query metrics table
   LOG_TRACE("Inserting Query Metric Tuples");
-  // auto query_metrics_table = GetMetricTable(MetricType::QUERY_NAME);
-
   std::shared_ptr<QueryMetric> query_metric;
   auto &completed_query_metrics = aggregated_stats_.GetCompletedQueryMetrics();
   while (completed_query_metrics.Dequeue(query_metric)) {
@@ -160,22 +157,18 @@ void StatsAggregator::UpdateQueryMetrics(int64_t time_stamp,
       num_params = query_params->num_params;
       format_buf = query_params->format_buf_copy;
       type_buf = query_params->type_buf_copy;
-      PL_ASSERT(num_params > 0);
+      PELOTON_ASSERT(num_params > 0);
     }
 
     // Generate and insert the tuple
-    // auto query_tuple = catalog::GetQueryMetricsCatalogTuple(
-    //     query_metrics_table->GetSchema(), query_metric->GetName(),
-    //     query_metric->GetDatabaseId(), num_params, type_buf, format_buf,
-    //     value_buf, reads, updates, deletes, inserts, (int64_t)latency,
-    //     (int64_t)(cpu_system + cpu_user), time_stamp, pool_.get());
-    // catalog::InsertTuple(query_metrics_table, std::move(query_tuple), txn);
-
-    catalog::QueryMetricsCatalog::GetInstance()->InsertQueryMetrics(
-        query_metric->GetName(), query_metric->GetDatabaseId(), num_params,
-        type_buf, format_buf, value_buf, reads, updates, deletes, inserts,
-        (int64_t)latency, (int64_t)(cpu_system + cpu_user), time_stamp,
-        pool_.get(), txn);
+    catalog::Catalog::GetInstance()
+        ->GetSystemCatalogs(query_metric->GetDatabaseId())
+        ->GetQueryMetricsCatalog()
+        ->InsertQueryMetrics(
+            query_metric->GetName(), query_metric->GetDatabaseId(), num_params,
+            type_buf, format_buf, value_buf, reads, updates, deletes, inserts,
+            (int64_t)latency, (int64_t)(cpu_system + cpu_user), time_stamp,
+            pool_.get(), txn);
 
     LOG_TRACE("Query Metric Tuple inserted");
   }
@@ -191,8 +184,9 @@ void StatsAggregator::UpdateMetrics() {
   auto storage_manager = storage::StorageManager::GetInstance();
 
   auto time_since_epoch = std::chrono::system_clock::now().time_since_epoch();
-  auto time_stamp = std::chrono::duration_cast<std::chrono::seconds>(
-                        time_since_epoch).count();
+  auto time_stamp =
+      std::chrono::duration_cast<std::chrono::seconds>(time_since_epoch)
+          .count();
 
   auto database_count = storage_manager->GetDatabaseCount();
   for (oid_t database_offset = 0; database_offset < database_count;
@@ -200,7 +194,19 @@ void StatsAggregator::UpdateMetrics() {
     auto database = storage_manager->GetDatabaseWithOffset(database_offset);
 
     // Update database metrics table
-    auto database_oid = database->GetOid();
+    if (!database) continue;
+    oid_t database_oid = database->GetOid();
+    std::string database_name;
+    try {
+      auto database_object =
+          catalog::Catalog::GetInstance()->GetDatabaseObject(database_oid, txn);
+      database_name = database_object->GetDatabaseName();
+    } catch (CatalogException &e) {
+      continue;
+    }
+
+    LOG_TRACE("Updating metrics for database: %s", database_name.c_str());
+
     auto database_metric = aggregated_stats_.GetDatabaseMetric(database_oid);
     auto txn_committed = database_metric->GetTxnCommitted().GetCounter();
     auto txn_aborted = database_metric->GetTxnAborted().GetCounter();
@@ -235,10 +241,13 @@ void StatsAggregator::UpdateTableMetrics(storage::Database *database,
     auto updates = table_access.GetUpdates();
     auto deletes = table_access.GetDeletes();
     auto inserts = table_access.GetInserts();
-
-    catalog::TableMetricsCatalog::GetInstance()->InsertTableMetrics(
-        database_oid, table_oid, reads, updates, deletes, inserts, time_stamp,
-        pool_.get(), txn);
+    // insert record into table metrics catalog
+    auto table_metrics_catalog = catalog::Catalog::GetInstance()
+                                     ->GetSystemCatalogs(database_oid)
+                                     ->GetTableMetricsCatalog();
+    table_metrics_catalog->InsertTableMetrics(table_oid, reads, updates,
+                                              deletes, inserts, time_stamp,
+                                              pool_.get(), txn);
     LOG_TRACE("Table Metric Tuple inserted");
 
     UpdateIndexMetrics(database, table, time_stamp, txn);
@@ -264,10 +273,13 @@ void StatsAggregator::UpdateIndexMetrics(storage::Database *database,
     auto reads = index_access.GetReads();
     auto deletes = index_access.GetDeletes();
     auto inserts = index_access.GetInserts();
-
-    catalog::IndexMetricsCatalog::GetInstance()->InsertIndexMetrics(
-        database_oid, table_oid, index_oid, reads, deletes, inserts, time_stamp,
-        pool_.get(), txn);
+    // insert record into index metrics catalog
+    auto index_metrics_catalog = catalog::Catalog::GetInstance()
+                                     ->GetSystemCatalogs(database_oid)
+                                     ->GetIndexMetricsCatalog();
+    index_metrics_catalog->InsertIndexMetrics(table_oid, index_oid, reads,
+                                              deletes, inserts, time_stamp,
+                                              pool_.get(), txn);
   }
 }
 
@@ -304,12 +316,12 @@ void StatsAggregator::RegisterContext(std::thread::id id_,
   {
     std::lock_guard<std::mutex> lock(stats_mutex_);
 
-    PL_ASSERT(backend_stats_.find(id_) == backend_stats_.end());
+    PELOTON_ASSERT(backend_stats_.find(id_) == backend_stats_.end());
 
     thread_number_++;
     backend_stats_[id_] = context_;
+    LOG_DEBUG("Stats aggregator hash map size: %ld", backend_stats_.size());
   }
-  LOG_DEBUG("Stats aggregator hash map size: %ld", backend_stats_.size());
 }
 
 // Unregister a BackendStatsContext. Currently we directly reuse the thread id
@@ -326,17 +338,6 @@ void StatsAggregator::UnregisterContext(std::thread::id id) {
       LOG_DEBUG("stats_context already deleted!");
     }
   }
-}
-
-storage::DataTable *StatsAggregator::GetMetricTable(std::string table_name) {
-  auto storage_manager = storage::StorageManager::GetInstance();
-  PL_ASSERT(storage_manager->GetDatabaseCount() > 0);
-  storage::Database *catalog_database =
-      storage_manager->GetDatabaseWithOid(CATALOG_DATABASE_OID);
-  PL_ASSERT(catalog_database != nullptr);
-  auto metrics_table = catalog_database->GetTableWithName(table_name);
-  PL_ASSERT(metrics_table != nullptr);
-  return metrics_table;
 }
 
 }  // namespace stats

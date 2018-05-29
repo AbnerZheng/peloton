@@ -47,10 +47,10 @@ DeleteExecutor::DeleteExecutor(const planner::AbstractPlan *node,
  * @return true on success, false otherwise.
  */
 bool DeleteExecutor::DInit() {
-  PL_ASSERT(children_.size() == 1);
-  PL_ASSERT(executor_context_);
+  PELOTON_ASSERT(children_.size() == 1);
+  PELOTON_ASSERT(executor_context_);
 
-  PL_ASSERT(target_table_ == nullptr);
+  PELOTON_ASSERT(target_table_ == nullptr);
 
   // Delete tuples in logical tile
   LOG_TRACE("Delete executor :: 1 child ");
@@ -58,7 +58,7 @@ bool DeleteExecutor::DInit() {
   // Grab data from plan node.
   const planner::DeletePlan &node = GetPlanNode<planner::DeletePlan>();
   target_table_ = node.GetTable();
-  PL_ASSERT(target_table_);
+  PELOTON_ASSERT(target_table_);
 
   return true;
 }
@@ -70,7 +70,7 @@ bool DeleteExecutor::DInit() {
  * @return true on success, false otherwise.
  */
 bool DeleteExecutor::DExecute() {
-  PL_ASSERT(target_table_);
+  PELOTON_ASSERT(target_table_);
   // Retrieve next tile.
   if (!children_[0]->Execute()) {
     return false;
@@ -131,6 +131,27 @@ bool DeleteExecutor::DExecute() {
       tile_group_header = tile_group->GetHeader();
 
       physical_tuple_id = old_location.offset;
+    }
+
+    ContainerTuple<storage::TileGroup> old_tuple(tile_group, physical_tuple_id);
+    storage::Tuple prev_tuple(target_table_->GetSchema(), true);
+
+    // Get a copy of the old tuple
+    for (oid_t column_itr = 0; column_itr < target_table_schema->GetColumnCount(); column_itr++) {
+      type::Value val = (old_tuple.GetValue(column_itr));
+      prev_tuple.SetValue(column_itr, val, executor_context_->GetPool());
+    }
+
+    // Check the foreign key source table
+    if (target_table_->CheckForeignKeySrcAndCascade(&prev_tuple,
+                                                    nullptr,
+                                                    current_txn,
+                                                    executor_context_,
+                                                    false) == false)
+    {
+      transaction_manager.SetTransactionResult(current_txn,
+                                              peloton::ResultType::FAILURE);
+      return false;
     }
 
     bool is_owner = transaction_manager.IsOwner(current_txn, tile_group_header,

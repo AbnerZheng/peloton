@@ -12,10 +12,10 @@
 
 #include "codegen/type/boolean_type.h"
 
-#include "codegen/value.h"
 #include "codegen/proxy/values_runtime_proxy.h"
 #include "codegen/type/integer_type.h"
 #include "codegen/type/varchar_type.h"
+#include "codegen/value.h"
 #include "common/exception.h"
 #include "type/limits.h"
 
@@ -25,9 +25,11 @@ namespace type {
 
 namespace {
 
-//===----------------------------------------------------------------------===//
-// CASTING OPERATIONS
-//===----------------------------------------------------------------------===//
+////////////////////////////////////////////////////////////////////////////////
+///
+/// Casting
+///
+////////////////////////////////////////////////////////////////////////////////
 
 struct CastBooleanToInteger : public TypeSystem::CastHandleNull {
   bool SupportsTypes(const Type &from_type,
@@ -38,7 +40,7 @@ struct CastBooleanToInteger : public TypeSystem::CastHandleNull {
 
   Value Impl(CodeGen &codegen, const Value &value,
              const Type &to_type) const override {
-    PL_ASSERT(SupportsTypes(value.GetType(), to_type));
+    PELOTON_ASSERT(SupportsTypes(value.GetType(), to_type));
 
     // Any integral value requires a zero-extension
     auto *raw_val = codegen->CreateZExt(value.GetValue(), codegen.Int32Type());
@@ -51,6 +53,24 @@ struct CastBooleanToInteger : public TypeSystem::CastHandleNull {
   }
 };
 
+struct CastBooleanToDecimal : public TypeSystem::CastHandleNull {
+  bool SupportsTypes(const Type &from_type,
+                     const Type &to_type) const override {
+    return from_type.type_id == peloton::type::TypeId::BOOLEAN &&
+           to_type.type_id == peloton::type::TypeId::DECIMAL;
+  }
+
+  Value Impl(CodeGen &codegen, const Value &value,
+             const Type &to_type) const override {
+    PELOTON_ASSERT(SupportsTypes(value.GetType(), to_type));
+
+    // Converts True to 1.0 and False to 0.0
+    auto *raw_val =
+        codegen->CreateUIToFP(value.GetValue(), codegen.DoubleType());
+    return Value{to_type, raw_val, nullptr, nullptr};
+  }
+};
+
 struct CastBooleanToVarchar : public TypeSystem::CastHandleNull {
   bool SupportsTypes(const Type &from_type,
                      const Type &to_type) const override {
@@ -60,7 +80,7 @@ struct CastBooleanToVarchar : public TypeSystem::CastHandleNull {
 
   Value Impl(CodeGen &codegen, const Value &value,
              const Type &to_type) const override {
-    PL_ASSERT(SupportsTypes(value.GetType(), to_type));
+    PELOTON_ASSERT(SupportsTypes(value.GetType(), to_type));
 
     // Convert this boolean (unsigned int) into a string
     llvm::Value *str_val = codegen->CreateSelect(
@@ -74,11 +94,12 @@ struct CastBooleanToVarchar : public TypeSystem::CastHandleNull {
   }
 };
 
-//===----------------------------------------------------------------------===//
-// COMPARISON
-//===----------------------------------------------------------------------===//
+////////////////////////////////////////////////////////////////////////////////
+///
+/// Comparisons
+///
+////////////////////////////////////////////////////////////////////////////////
 
-// Comparison functions
 struct CompareBoolean : public TypeSystem::SimpleComparisonHandleNull {
   bool SupportsTypes(const Type &left_type,
                      const Type &right_type) const override {
@@ -88,7 +109,7 @@ struct CompareBoolean : public TypeSystem::SimpleComparisonHandleNull {
 
   Value CompareLtImpl(CodeGen &codegen, const Value &left,
                       const Value &right) const override {
-    PL_ASSERT(SupportsTypes(left.GetType(), right.GetType()));
+    PELOTON_ASSERT(SupportsTypes(left.GetType(), right.GetType()));
 
     // Do the comparison
     llvm::Value *result =
@@ -100,7 +121,7 @@ struct CompareBoolean : public TypeSystem::SimpleComparisonHandleNull {
 
   Value CompareLteImpl(CodeGen &codegen, const Value &left,
                        const Value &right) const override {
-    PL_ASSERT(SupportsTypes(left.GetType(), right.GetType()));
+    PELOTON_ASSERT(SupportsTypes(left.GetType(), right.GetType()));
 
     // Do the comparison
     llvm::Value *result =
@@ -112,7 +133,7 @@ struct CompareBoolean : public TypeSystem::SimpleComparisonHandleNull {
 
   Value CompareEqImpl(CodeGen &codegen, const Value &left,
                       const Value &right) const override {
-    PL_ASSERT(SupportsTypes(left.GetType(), right.GetType()));
+    PELOTON_ASSERT(SupportsTypes(left.GetType(), right.GetType()));
 
     // Do the comparison
     llvm::Value *result =
@@ -124,7 +145,7 @@ struct CompareBoolean : public TypeSystem::SimpleComparisonHandleNull {
 
   Value CompareNeImpl(CodeGen &codegen, const Value &left,
                       const Value &right) const override {
-    PL_ASSERT(SupportsTypes(left.GetType(), right.GetType()));
+    PELOTON_ASSERT(SupportsTypes(left.GetType(), right.GetType()));
 
     // Do the comparison
     llvm::Value *result =
@@ -136,7 +157,7 @@ struct CompareBoolean : public TypeSystem::SimpleComparisonHandleNull {
 
   Value CompareGtImpl(CodeGen &codegen, const Value &left,
                       const Value &right) const override {
-    PL_ASSERT(SupportsTypes(left.GetType(), right.GetType()));
+    PELOTON_ASSERT(SupportsTypes(left.GetType(), right.GetType()));
 
     // Do the comparison
     llvm::Value *result =
@@ -148,7 +169,7 @@ struct CompareBoolean : public TypeSystem::SimpleComparisonHandleNull {
 
   Value CompareGteImpl(CodeGen &codegen, const Value &left,
                        const Value &right) const override {
-    PL_ASSERT(SupportsTypes(left.GetType(), right.GetType()));
+    PELOTON_ASSERT(SupportsTypes(left.GetType(), right.GetType()));
 
     // Do the comparison
     llvm::Value *result =
@@ -160,7 +181,7 @@ struct CompareBoolean : public TypeSystem::SimpleComparisonHandleNull {
 
   Value CompareForSortImpl(CodeGen &codegen, const Value &left,
                            const Value &right) const override {
-    PL_ASSERT(SupportsTypes(left.GetType(), right.GetType()));
+    PELOTON_ASSERT(SupportsTypes(left.GetType(), right.GetType()));
 
     // For boolean sorting, we convert 1-bit boolean values into a 32-bit number
     const auto int_type = type::Type{Integer::Instance()};
@@ -171,9 +192,11 @@ struct CompareBoolean : public TypeSystem::SimpleComparisonHandleNull {
   }
 };
 
-//===----------------------------------------------------------------------===//
-// BINARY OPERATIONS
-//===----------------------------------------------------------------------===//
+////////////////////////////////////////////////////////////////////////////////
+///
+/// Binary operations
+///
+////////////////////////////////////////////////////////////////////////////////
 
 // Logical AND
 struct LogicalAnd : public TypeSystem::BinaryOperatorHandleNull {
@@ -189,7 +212,8 @@ struct LogicalAnd : public TypeSystem::BinaryOperatorHandleNull {
   }
 
   Value Impl(CodeGen &codegen, const Value &left, const Value &right,
-             UNUSED_ATTRIBUTE OnError on_error) const override {
+             UNUSED_ATTRIBUTE const TypeSystem::InvocationContext &ctx)
+      const override {
     auto *raw_val = codegen->CreateAnd(left.GetValue(), right.GetValue());
     return Value{Boolean::Instance(), raw_val, nullptr, nullptr};
   }
@@ -209,54 +233,68 @@ struct LogicalOr : public TypeSystem::BinaryOperatorHandleNull {
   }
 
   Value Impl(CodeGen &codegen, const Value &left, const Value &right,
-             UNUSED_ATTRIBUTE OnError on_error) const override {
+             UNUSED_ATTRIBUTE const TypeSystem::InvocationContext &ctx)
+      const override {
     auto *raw_val = codegen->CreateOr(left.GetValue(), right.GetValue());
     return Value{Boolean::Instance(), raw_val, nullptr, nullptr};
   }
 };
 
-//===----------------------------------------------------------------------===//
-// TYPE SYSTEM CONSTRUCTION
-//===----------------------------------------------------------------------===//
+////////////////////////////////////////////////////////////////////////////////
+///
+/// Function tables
+///
+////////////////////////////////////////////////////////////////////////////////
 
-// The list of types a SQL boolean type can be implicitly casted to
-const std::vector<peloton::type::TypeId> kImplicitCastingTable = {
+// Implicit casts
+std::vector<peloton::type::TypeId> kImplicitCastingTable = {
     peloton::type::TypeId::BOOLEAN};
 
-static CastBooleanToInteger kBooleanToInteger;
-static CastBooleanToVarchar kBooleanToVarchar;
-static std::vector<TypeSystem::CastInfo> kExplicitCastingTable = {
+
+// Explicit casts
+CastBooleanToInteger kBooleanToInteger;
+CastBooleanToDecimal kBooleanToDecimal;
+CastBooleanToVarchar kBooleanToVarchar;
+std::vector<TypeSystem::CastInfo> kExplicitCastingTable = {
     {peloton::type::TypeId::BOOLEAN, peloton::type::TypeId::INTEGER,
      kBooleanToInteger},
     {peloton::type::TypeId::BOOLEAN, peloton::type::TypeId::VARCHAR,
-     kBooleanToVarchar}};
+     kBooleanToVarchar},
+    {peloton::type::TypeId::BOOLEAN, peloton::type::TypeId::DECIMAL,
+     kBooleanToDecimal}};
 
-static CompareBoolean kCompareBoolean;
-static std::vector<TypeSystem::ComparisonInfo> kComparisonTable = {
-    {kCompareBoolean}};
+// Comparison operations
+CompareBoolean kCompareBoolean;
+std::vector<TypeSystem::ComparisonInfo> kComparisonTable = {{kCompareBoolean}};
 
-static std::vector<TypeSystem::UnaryOpInfo> kUnaryOperatorTable = {};
+// Unary operations
+std::vector<TypeSystem::UnaryOpInfo> kUnaryOperatorTable = {};
 
-static LogicalAnd kLogicalAnd;
-static LogicalOr kLogicalOr;
-static std::vector<TypeSystem::BinaryOpInfo> kBinaryOperatorTable = {
+// Binary operations
+LogicalAnd kLogicalAnd;
+LogicalOr kLogicalOr;
+std::vector<TypeSystem::BinaryOpInfo> kBinaryOperatorTable = {
     {OperatorId::LogicalAnd, kLogicalAnd}, {OperatorId::LogicalOr, kLogicalOr}};
 
 // Nary operations
-static std::vector<TypeSystem::NaryOpInfo> kNaryOperatorTable = {};
+std::vector<TypeSystem::NaryOpInfo> kNaryOperatorTable = {};
 
 // No arg operations
-static std::vector<TypeSystem::NoArgOpInfo> kNoArgOperatorTable = {};
+std::vector<TypeSystem::NoArgOpInfo> kNoArgOperatorTable = {};
 
 }  // anonymous namespace
 
-// Initialize the BOOLEAN SQL type with the configured type system
+////////////////////////////////////////////////////////////////////////////////
+///
+/// BOOLEAN type initialization and configuration
+///
+////////////////////////////////////////////////////////////////////////////////
+
 Boolean::Boolean()
     : SqlType(peloton::type::TypeId::BOOLEAN),
       type_system_(kImplicitCastingTable, kExplicitCastingTable,
-                   kComparisonTable, kUnaryOperatorTable,
-                   kBinaryOperatorTable, kNaryOperatorTable,
-                   kNoArgOperatorTable) {}
+                   kComparisonTable, kUnaryOperatorTable, kBinaryOperatorTable,
+                   kNaryOperatorTable, kNoArgOperatorTable) {}
 
 Value Boolean::GetMinValue(CodeGen &codegen) const {
   auto *raw_val = codegen.ConstBool(peloton::type::PELOTON_BOOLEAN_MIN);

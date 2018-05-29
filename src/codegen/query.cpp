@@ -11,9 +11,10 @@
 //===----------------------------------------------------------------------===//
 
 #include "codegen/query.h"
-#include "codegen/query_result_consumer.h"
+#include "codegen/execution_consumer.h"
 #include "common/timer.h"
 #include "executor/plan_executor.h"
+#include "executor/executor_context.h"
 #include "storage/storage_manager.h"
 
 namespace peloton {
@@ -23,39 +24,34 @@ namespace codegen {
 Query::Query(const planner::AbstractPlan &query_plan)
     : query_plan_(query_plan) {}
 
-void Query::Execute(std::unique_ptr<executor::ExecutorContext> executor_context,
-                    QueryResultConsumer &consumer,
-                    std::function<void(executor::ExecutionResult)> on_complete,
-                    RuntimeStats *stats) {
-  CodeGen codegen{GetCodeContext()};
+void Query::Execute(executor::ExecutorContext &executor_context,
+                    ExecutionConsumer &consumer, RuntimeStats *stats) {
+  CodeGen codegen{code_context_};
 
-  llvm::Type *runtime_state_type = runtime_state_.FinalizeType(codegen);
-  size_t parameter_size = codegen.SizeOf(runtime_state_type);
-  PL_ASSERT((parameter_size % 8 == 0) && "parameter size not multiple of 8");
+  llvm::Type *query_state_type = query_state_.GetType();
+  size_t parameter_size = codegen.SizeOf(query_state_type);
+  PELOTON_ASSERT((parameter_size % 8 == 0) &&
+                 "parameter size not multiple of 8");
 
   // Allocate some space for the function arguments
   std::unique_ptr<char[]> param_data{new char[parameter_size]};
   char *param = param_data.get();
-  PL_MEMSET(param, 0, parameter_size);
+  PELOTON_MEMSET(param, 0, parameter_size);
 
   // We use this handy class to avoid complex casting and pointer manipulation
   struct FunctionArguments {
-    storage::StorageManager *storage_manager;
     executor::ExecutorContext *executor_context;
-    QueryParameters *query_parameters;
     char *consumer_arg;
     char rest[0];
   } PACKED;
 
   // Set up the function arguments
   auto *func_args = reinterpret_cast<FunctionArguments *>(param_data.get());
-  func_args->storage_manager = storage::StorageManager::GetInstance();
-  func_args->executor_context = executor_context.get();
-  func_args->query_parameters = &executor_context->GetParams();
+  func_args->executor_context = &executor_context;
   func_args->consumer_arg = consumer.GetConsumerState();
 
   // Timer
-  Timer<std::ratio<1, 1000>> timer;
+  Timer<std::milli> timer;
   timer.Start();
 
   // Call init
@@ -103,11 +99,6 @@ void Query::Execute(std::unique_ptr<executor::ExecutorContext> executor_context,
     timer.Stop();
     stats->tear_down_ms = timer.GetDuration();
   }
-
-  executor::ExecutionResult result;
-  result.m_result = ResultType::SUCCESS;
-  result.m_processed = executor_context->num_processed;
-  on_complete(result);
 }
 
 bool Query::Prepare(const QueryFunctions &query_funcs) {
@@ -123,15 +114,15 @@ bool Query::Prepare(const QueryFunctions &query_funcs) {
   // Get pointers to the JITed functions
   init_func_ = (compiled_function_t)code_context_.GetRawFunctionPointer(
       query_funcs.init_func);
-  PL_ASSERT(init_func_ != nullptr);
+  PELOTON_ASSERT(init_func_ != nullptr);
 
   plan_func_ = (compiled_function_t)code_context_.GetRawFunctionPointer(
       query_funcs.plan_func);
-  PL_ASSERT(plan_func_ != nullptr);
+  PELOTON_ASSERT(plan_func_ != nullptr);
 
   tear_down_func_ = (compiled_function_t)code_context_.GetRawFunctionPointer(
       query_funcs.tear_down_func);
-  PL_ASSERT(tear_down_func_ != nullptr);
+  PELOTON_ASSERT(tear_down_func_ != nullptr);
 
   LOG_TRACE("Query has been setup ...");
 

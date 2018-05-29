@@ -17,10 +17,10 @@
 
 #include "common/item_pointer.h"
 #include "common/macros.h"
-#include "common/platform.h"
+#include "common/synchronization/spin_latch.h"
 #include "common/printable.h"
 #include "storage/tuple.h"
-#include "type/types.h"
+#include "common/internal_types.h"
 #include "type/value.h"
 
 namespace peloton {
@@ -78,7 +78,7 @@ class TileGroupHeader : public Printable {
     header_size = other.header_size;
 
     // copy over all the data
-    PL_MEMCPY(data, other.data, header_size);
+    PELOTON_MEMCPY(data, other.data, header_size);
 
     num_tuple_slots = other.num_tuple_slots;
     oid_t val = other.next_tuple_slot;
@@ -141,7 +141,7 @@ class TileGroupHeader : public Printable {
 
   // Getters
   inline const TileGroup *GetTileGroup() const {
-    PL_ASSERT(tile_group);
+    PELOTON_ASSERT(tile_group);
     return tile_group;
   }
 
@@ -248,7 +248,7 @@ class TileGroupHeader : public Printable {
   void PrintVisibility(txn_id_t txn_id, cid_t at_cid);
 
   // Getter for spin lock
-  Spinlock &GetHeaderLock() { return tile_header_lock; }
+  common::synchronization::SpinLatch &GetHeaderLock() { return tile_header_lock; }
 
   // Sync the contents
   void Sync();
@@ -302,9 +302,9 @@ class TileGroupHeader : public Printable {
   // IT MAY OUT OF BOUNDARY! ALWAYS CHECK IF IT EXCEEDS num_tuple_slots
   std::atomic<oid_t> next_tuple_slot;
 
-  Spinlock tile_header_lock;
+  common::synchronization::SpinLatch tile_header_lock;
 
-  // Immmutable Flag. Should be set by the brain to be true.
+  // Immmutable Flag. Should be set by the indextuner to be true.
   // By default it will be set to false.
   bool immutable;
 };

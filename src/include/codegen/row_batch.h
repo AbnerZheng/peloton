@@ -15,15 +15,18 @@
 #include <unordered_map>
 
 #include "codegen/codegen.h"
-#include "codegen/lang/loop.h"
 #include "codegen/value.h"
-#include "codegen/vector.h"
-#include "planner/attribute_info.h"
 
 namespace peloton {
+
+namespace planner {
+struct AttributeInfo;
+}  // namespace planner
+
 namespace codegen {
 
 class CompilationContext;
+class Vector;
 
 class RowBatch {
  public:
@@ -96,7 +99,7 @@ class RowBatch {
 
     // Register the temporary availability of an attribute in this row
     void RegisterAttributeValue(const planner::AttributeInfo *ai,
-                                codegen::Value &val);
+                                const codegen::Value &val);
 
     RowBatch &GetBatch() const { return batch_; }
 

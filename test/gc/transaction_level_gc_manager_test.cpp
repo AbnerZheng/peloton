@@ -93,7 +93,7 @@ TEST_F(TransactionLevelGCManagerTests, UpdateDeleteTest) {
   auto &gc_manager = gc::TransactionLevelGCManager::GetInstance();
   auto storage_manager = storage::StorageManager::GetInstance();
   // create database
-  auto database = TestingExecutorUtil::InitializeDatabase("DATABASE0");
+  auto database = TestingExecutorUtil::InitializeDatabase("database0");
   oid_t db_id = database->GetOid();
   EXPECT_TRUE(storage_manager->HasDatabase(db_id));
 
@@ -194,15 +194,18 @@ TEST_F(TransactionLevelGCManagerTests, UpdateDeleteTest) {
 
   EXPECT_EQ(0, unlinked_count);
 
+  gc_manager.StopGC();
+  gc::GCManagerFactory::Configure(0);
+
   table.release();
 
   // DROP!
-  TestingExecutorUtil::DeleteDatabase("DATABASE0");
+  TestingExecutorUtil::DeleteDatabase("database0");
 
   auto &txn_manager = concurrency::TransactionManagerFactory::GetInstance();
   auto txn = txn_manager.BeginTransaction();
   EXPECT_THROW(
-      catalog::Catalog::GetInstance()->GetDatabaseObject("DATABASE0", txn),
+      catalog::Catalog::GetInstance()->GetDatabaseObject("database0", txn),
       CatalogException);
   txn_manager.CommitTransaction(txn);
   // EXPECT_FALSE(storage_manager->HasDatabase(db_id));
@@ -221,7 +224,7 @@ TEST_F(TransactionLevelGCManagerTests, ReInsertTest) {
 
   auto storage_manager = storage::StorageManager::GetInstance();
   // create database
-  auto database = TestingExecutorUtil::InitializeDatabase("DATABASE1");
+  auto database = TestingExecutorUtil::InitializeDatabase("database1");
   oid_t db_id = database->GetOid();
   EXPECT_TRUE(storage_manager->HasDatabase(db_id));
 
@@ -354,15 +357,18 @@ TEST_F(TransactionLevelGCManagerTests, ReInsertTest) {
   EXPECT_TRUE(ret == ResultType::SUCCESS);
   EXPECT_TRUE(results[0] != -1);
 
+  gc_manager.StopGC();
+  gc::GCManagerFactory::Configure(0);
+
   table.release();
 
   // DROP!
-  TestingExecutorUtil::DeleteDatabase("DATABASE1");
+  TestingExecutorUtil::DeleteDatabase("database1");
 
   auto &txn_manager = concurrency::TransactionManagerFactory::GetInstance();
   auto txn = txn_manager.BeginTransaction();
   EXPECT_THROW(
-      catalog::Catalog::GetInstance()->GetDatabaseObject("DATABASE0", txn),
+      catalog::Catalog::GetInstance()->GetDatabaseObject("database0", txn),
       CatalogException);
   txn_manager.CommitTransaction(txn);
   // EXPECT_FALSE(storage_manager->HasDatabase(db_id));
@@ -387,7 +393,7 @@ TEST_F(TransactionLevelGCManagerTests, ImmutabilityTest) {
 
   auto storage_manager = storage::StorageManager::GetInstance();
   // create database
-  auto database = TestingExecutorUtil::InitializeDatabase("ImmutabilityDB");
+  auto database = TestingExecutorUtil::InitializeDatabase("immutabilitydb");
   oid_t db_id = database->GetOid();
   EXPECT_TRUE(storage_manager->HasDatabase(db_id));
 
@@ -465,14 +471,17 @@ TEST_F(TransactionLevelGCManagerTests, ImmutabilityTest) {
   location = gc_manager.ReturnFreeSlot((table.get())->GetOid());
   EXPECT_EQ(location.IsNull(), false);
 
+  gc_manager.StopGC();
+  gc::GCManagerFactory::Configure(0);
+
   table.release();
   // DROP!
-  TestingExecutorUtil::DeleteDatabase("ImmutabilityDB");
+  TestingExecutorUtil::DeleteDatabase("immutabilitydb");
 
   auto &txn_manager = concurrency::TransactionManagerFactory::GetInstance();
   auto txn = txn_manager.BeginTransaction();
   EXPECT_THROW(
-      catalog::Catalog::GetInstance()->GetDatabaseObject("ImmutabilityDB", txn),
+      catalog::Catalog::GetInstance()->GetDatabaseObject("immutabilitydb", txn),
       CatalogException);
   txn_manager.CommitTransaction(txn);
 }

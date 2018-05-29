@@ -6,7 +6,7 @@
 //
 // Identification: src/codegen/expression/comparison_translator.cpp
 //
-// Copyright (c) 2015-2017, Carnegie Mellon University Database Group
+// Copyright (c) 2015-2018, Carnegie Mellon University Database Group
 //
 //===----------------------------------------------------------------------===//
 
@@ -23,7 +23,7 @@ ComparisonTranslator::ComparisonTranslator(
     const expression::ComparisonExpression &comparison,
     CompilationContext &context)
     : ExpressionTranslator(comparison, context) {
-  PL_ASSERT(comparison.GetChildrenSize() == 2);
+  PELOTON_ASSERT(comparison.GetChildrenSize() == 2);
 }
 
 // Produce the result of performing the comparison of left and right values
@@ -48,8 +48,16 @@ codegen::Value ComparisonTranslator::DeriveValue(CodeGen &codegen,
     case ExpressionType::COMPARE_GREATERTHANOREQUALTO:
       return left.CompareGte(codegen, right);
     case ExpressionType::COMPARE_LIKE: {
-      return left.CallBinaryOp(codegen, OperatorId::Like, right,
-                               OnError::Exception);
+      type::TypeSystem::InvocationContext ctx{
+          .on_error = OnError::Exception,
+          .executor_context = GetExecutorContextPtr()};
+
+      type::Type left_type = left.GetType(), right_type = right.GetType();
+      auto *binary_op = type::TypeSystem::GetBinaryOperator(
+          OperatorId::Like, left_type, left_type, right_type, right_type);
+      PELOTON_ASSERT(binary_op);
+      return binary_op->Eval(codegen, left.CastTo(codegen, left_type),
+                             right.CastTo(codegen, right_type), ctx);
     }
     default: {
       throw Exception{"Invalid expression type for translation " +

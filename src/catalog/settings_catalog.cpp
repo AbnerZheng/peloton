@@ -21,14 +21,15 @@
 namespace peloton {
 namespace catalog {
 
-SettingsCatalog &SettingsCatalog::GetInstance(concurrency::TransactionContext *txn) {
+SettingsCatalog &SettingsCatalog::GetInstance(
+    concurrency::TransactionContext *txn) {
   static SettingsCatalog settings_catalog{txn};
   return settings_catalog;
 }
 
 SettingsCatalog::SettingsCatalog(concurrency::TransactionContext *txn)
     : AbstractCatalog("CREATE TABLE " CATALOG_DATABASE_NAME
-                      "." SETTINGS_CATALOG_NAME
+                      "." CATALOG_SCHEMA_NAME "." SETTINGS_CATALOG_NAME
                       " ("
                       "name   VARCHAR NOT NULL, "
                       "value  VARCHAR NOT NULL, "
@@ -42,7 +43,7 @@ SettingsCatalog::SettingsCatalog(concurrency::TransactionContext *txn)
                       txn) {
   // Add secondary index here if necessary
   Catalog::GetInstance()->CreateIndex(
-      CATALOG_DATABASE_NAME, SETTINGS_CATALOG_NAME, {0},
+      CATALOG_DATABASE_NAME, CATALOG_SCHEMA_NAME, SETTINGS_CATALOG_NAME, {0},
       SETTINGS_CATALOG_NAME "_skey0", false, IndexType::BWTREE, txn);
 }
 
@@ -92,8 +93,8 @@ bool SettingsCatalog::DeleteSetting(const std::string &name,
   return DeleteWithIndexScan(index_offset, values, txn);
 }
 
-std::string SettingsCatalog::GetSettingValue(const std::string &name,
-                                             concurrency::TransactionContext *txn) {
+std::string SettingsCatalog::GetSettingValue(
+    const std::string &name, concurrency::TransactionContext *txn) {
   std::vector<oid_t> column_ids({static_cast<int>(ColumnId::VALUE)});
   oid_t index_offset = static_cast<int>(IndexId::SECONDARY_KEY_0);
   std::vector<type::Value> values;
@@ -103,9 +104,9 @@ std::string SettingsCatalog::GetSettingValue(const std::string &name,
       GetResultWithIndexScan(column_ids, index_offset, values, txn);
 
   std::string config_value = "";
-  PL_ASSERT(result_tiles->size() <= 1);
+  PELOTON_ASSERT(result_tiles->size() <= 1);
   if (result_tiles->size() != 0) {
-    PL_ASSERT((*result_tiles)[0]->GetTupleCount() <= 1);
+    PELOTON_ASSERT((*result_tiles)[0]->GetTupleCount() <= 1);
     if ((*result_tiles)[0]->GetTupleCount() != 0) {
       config_value = (*result_tiles)[0]->GetValue(0, 0).ToString();
     }
@@ -113,8 +114,8 @@ std::string SettingsCatalog::GetSettingValue(const std::string &name,
   return config_value;
 }
 
-std::string SettingsCatalog::GetDefaultValue(const std::string &name,
-                                             concurrency::TransactionContext *txn) {
+std::string SettingsCatalog::GetDefaultValue(
+    const std::string &name, concurrency::TransactionContext *txn) {
   std::vector<oid_t> column_ids({static_cast<int>(ColumnId::VALUE)});
   oid_t index_offset = static_cast<int>(IndexId::SECONDARY_KEY_0);
   std::vector<type::Value> values;
@@ -124,9 +125,9 @@ std::string SettingsCatalog::GetDefaultValue(const std::string &name,
       GetResultWithIndexScan(column_ids, index_offset, values, txn);
 
   std::string config_value = "";
-  PL_ASSERT(result_tiles->size() <= 1);
+  PELOTON_ASSERT(result_tiles->size() <= 1);
   if (result_tiles->size() != 0) {
-    PL_ASSERT((*result_tiles)[0]->GetTupleCount() <= 1);
+    PELOTON_ASSERT((*result_tiles)[0]->GetTupleCount() <= 1);
     if ((*result_tiles)[0]->GetTupleCount() != 0) {
       config_value = (*result_tiles)[0]->GetValue(0, 0).ToString();
     }

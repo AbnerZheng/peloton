@@ -24,7 +24,8 @@ LanguageCatalogObject::LanguageCatalogObject(executor::LogicalTile *tuple)
     : lang_oid_(tuple->GetValue(0, 0).GetAs<oid_t>()),
       lang_name_(tuple->GetValue(0, 1).GetAs<const char *>()) {}
 
-LanguageCatalog &LanguageCatalog::GetInstance(concurrency::TransactionContext *txn) {
+LanguageCatalog &LanguageCatalog::GetInstance(
+    concurrency::TransactionContext *txn) {
   static LanguageCatalog language_catalog{txn};
   return language_catalog;
 }
@@ -33,13 +34,13 @@ LanguageCatalog::~LanguageCatalog(){};
 
 LanguageCatalog::LanguageCatalog(concurrency::TransactionContext *txn)
     : AbstractCatalog("CREATE TABLE " CATALOG_DATABASE_NAME
-                      "." LANGUAGE_CATALOG_NAME
+                      "." CATALOG_SCHEMA_NAME "." LANGUAGE_CATALOG_NAME
                       " ("
                       "language_oid   INT NOT NULL PRIMARY KEY, "
                       "lanname        VARCHAR NOT NULL);",
                       txn) {
   Catalog::GetInstance()->CreateIndex(
-      CATALOG_DATABASE_NAME, LANGUAGE_CATALOG_NAME, {1},
+      CATALOG_DATABASE_NAME, CATALOG_SCHEMA_NAME, LANGUAGE_CATALOG_NAME, {1},
       LANGUAGE_CATALOG_NAME "_skey0", false, IndexType::BWTREE, txn);
 }
 
@@ -82,11 +83,11 @@ std::unique_ptr<LanguageCatalogObject> LanguageCatalog::GetLanguageByOid(
 
   auto result_tiles =
       GetResultWithIndexScan(column_ids, index_offset, values, txn);
-  PL_ASSERT(result_tiles->size() <= 1);
+  PELOTON_ASSERT(result_tiles->size() <= 1);
 
   std::unique_ptr<LanguageCatalogObject> ret;
   if (result_tiles->size() == 1) {
-    PL_ASSERT((*result_tiles)[0]->GetTupleCount() <= 1);
+    PELOTON_ASSERT((*result_tiles)[0]->GetTupleCount() <= 1);
     ret.reset(new LanguageCatalogObject((*result_tiles)[0].get()));
   }
 
@@ -102,11 +103,11 @@ std::unique_ptr<LanguageCatalogObject> LanguageCatalog::GetLanguageByName(
 
   auto result_tiles =
       GetResultWithIndexScan(column_ids, index_offset, values, txn);
-  PL_ASSERT(result_tiles->size() <= 1);
+  PELOTON_ASSERT(result_tiles->size() <= 1);
 
   std::unique_ptr<LanguageCatalogObject> ret;
   if (result_tiles->size() == 1) {
-    PL_ASSERT((*result_tiles)[0]->GetTupleCount() <= 1);
+    PELOTON_ASSERT((*result_tiles)[0]->GetTupleCount() <= 1);
     ret.reset(new LanguageCatalogObject((*result_tiles)[0].get()));
   }
 

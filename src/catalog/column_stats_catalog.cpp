@@ -29,7 +29,7 @@ ColumnStatsCatalog *ColumnStatsCatalog::GetInstance(
 
 ColumnStatsCatalog::ColumnStatsCatalog(concurrency::TransactionContext *txn)
     : AbstractCatalog("CREATE TABLE " CATALOG_DATABASE_NAME
-                      "." COLUMN_STATS_CATALOG_NAME
+                      "." CATALOG_SCHEMA_NAME "." COLUMN_STATS_CATALOG_NAME
                       " ("
                       "database_id    INT NOT NULL, "
                       "table_id       INT NOT NULL, "
@@ -45,12 +45,14 @@ ColumnStatsCatalog::ColumnStatsCatalog(concurrency::TransactionContext *txn)
                       txn) {
   // unique key: (database_id, table_id, column_id)
   Catalog::GetInstance()->CreateIndex(
-      CATALOG_DATABASE_NAME, COLUMN_STATS_CATALOG_NAME, {0, 1, 2},
-      COLUMN_STATS_CATALOG_NAME "_skey0", true, IndexType::BWTREE, txn);
+      CATALOG_DATABASE_NAME, CATALOG_SCHEMA_NAME, COLUMN_STATS_CATALOG_NAME,
+      {0, 1, 2}, COLUMN_STATS_CATALOG_NAME "_skey0", true, IndexType::BWTREE,
+      txn);
   // non-unique key: (database_id, table_id)
   Catalog::GetInstance()->CreateIndex(
-      CATALOG_DATABASE_NAME, COLUMN_STATS_CATALOG_NAME, {0, 1},
-      COLUMN_STATS_CATALOG_NAME "_skey1", false, IndexType::BWTREE, txn);
+      CATALOG_DATABASE_NAME, CATALOG_SCHEMA_NAME, COLUMN_STATS_CATALOG_NAME,
+      {0, 1}, COLUMN_STATS_CATALOG_NAME "_skey1", false, IndexType::BWTREE,
+      txn);
 }
 
 ColumnStatsCatalog::~ColumnStatsCatalog() {}
@@ -110,9 +112,9 @@ bool ColumnStatsCatalog::InsertColumnStats(
   return InsertTuple(std::move(tuple), txn);
 }
 
-bool ColumnStatsCatalog::DeleteColumnStats(oid_t database_id, oid_t table_id,
-                                           oid_t column_id,
-                                           concurrency::TransactionContext *txn) {
+bool ColumnStatsCatalog::DeleteColumnStats(
+    oid_t database_id, oid_t table_id, oid_t column_id,
+    concurrency::TransactionContext *txn) {
   oid_t index_offset = IndexId::SECONDARY_KEY_0;  // Secondary key index
 
   std::vector<type::Value> values;
@@ -140,13 +142,13 @@ std::unique_ptr<std::vector<type::Value>> ColumnStatsCatalog::GetColumnStats(
   auto result_tiles =
       GetResultWithIndexScan(column_ids, index_offset, values, txn);
 
-  PL_ASSERT(result_tiles->size() <= 1);  // unique
+  PELOTON_ASSERT(result_tiles->size() <= 1);  // unique
   if (result_tiles->size() == 0) {
     return nullptr;
   }
 
   auto tile = (*result_tiles)[0].get();
-  PL_ASSERT(tile->GetTupleCount() <= 1);
+  PELOTON_ASSERT(tile->GetTupleCount() <= 1);
   if (tile->GetTupleCount() == 0) {
     return nullptr;
   }
@@ -190,7 +192,7 @@ size_t ColumnStatsCatalog::GetTableStats(
   auto result_tiles =
       GetResultWithIndexScan(column_ids, index_offset, values, txn);
 
-  PL_ASSERT(result_tiles->size() <= 1);  // unique
+  PELOTON_ASSERT(result_tiles->size() <= 1);  // unique
   if (result_tiles->size() == 0) {
     return 0;
   }

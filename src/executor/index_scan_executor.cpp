@@ -12,8 +12,10 @@
 
 #include "executor/index_scan_executor.h"
 
+#include "catalog/catalog.h"
 #include "catalog/manager.h"
 #include "common/container_tuple.h"
+#include "common/internal_types.h"
 #include "common/logger.h"
 #include "concurrency/transaction_manager_factory.h"
 #include "executor/executor_context.h"
@@ -26,7 +28,6 @@
 #include "storage/masked_tuple.h"
 #include "storage/tile_group.h"
 #include "storage/tile_group_header.h"
-#include "type/types.h"
 #include "type/value.h"
 
 namespace peloton {
@@ -53,15 +54,10 @@ bool IndexScanExecutor::DInit() {
 
   if (!status) return false;
 
-  PL_ASSERT(children_.size() == 0);
+  PELOTON_ASSERT(children_.size() == 0);
 
   // Grab info from plan node and check it
   const planner::IndexScanPlan &node = GetPlanNode<planner::IndexScanPlan>();
-
-  index_ = node.GetIndex();
-  PL_ASSERT(index_ != nullptr);
-
-  index_predicate_ = node.GetIndexPredicate();
 
   result_itr_ = START_OID;
   result_.clear();
@@ -84,7 +80,7 @@ bool IndexScanExecutor::DInit() {
   descend_ = node.GetDescend();
 
   if (runtime_keys_.size() != 0) {
-    PL_ASSERT(runtime_keys_.size() == values_.size());
+    PELOTON_ASSERT(runtime_keys_.size() == values_.size());
 
     if (!key_ready_) {
       values_.clear();
@@ -107,6 +103,18 @@ bool IndexScanExecutor::DInit() {
     std::iota(full_column_ids_.begin(), full_column_ids_.end(), 0);
   }
 
+  oid_t index_id = node.GetIndexId();
+  index_ = table_->GetIndexWithOid(index_id);
+  PELOTON_ASSERT(index_ != nullptr);
+
+  // Then add the only conjunction predicate into the index predicate list
+  // (at least for now we only supports single conjunction)
+  //
+  // Values that are left blank will be recorded for future binding
+  // and their offset inside the value array will be remembered
+  index_predicate_.AddConjunctionScanPredicate(index_.get(), values_,
+                                               key_column_ids_, expr_types_);
+
   return true;
 }
 
@@ -127,7 +135,7 @@ bool IndexScanExecutor::DExecute() {
     }
   }
   // Already performed the index lookup
-  PL_ASSERT(done_);
+  PELOTON_ASSERT(done_);
 
   while (result_itr_ < result_.size()) {  // Avoid returning empty tiles
     if (result_[result_itr_]->GetTupleCount() == 0) {
@@ -146,14 +154,14 @@ bool IndexScanExecutor::DExecute() {
 }
 
 bool IndexScanExecutor::ExecPrimaryIndexLookup() {
-  PL_ASSERT(!done_);
+  PELOTON_ASSERT(!done_);
 
   std::vector<ItemPointer *> tuple_location_ptrs;
 
   // Grab info from plan node
   bool acquire_owner = GetPlanNode<planner::AbstractScan>().IsForUpdate();
 
-  PL_ASSERT(index_->GetIndexType() == IndexConstraintType::PRIMARY_KEY);
+  PELOTON_ASSERT(index_->GetIndexType() == IndexConstraintType::PRIMARY_KEY);
 
   if (0 == key_column_ids_.size()) {
     index_->ScanAllKeys(tuple_location_ptrs);
@@ -199,7 +207,6 @@ bool IndexScanExecutor::ExecPrimaryIndexLookup() {
   auto current_txn = executor_context_->GetTransaction();
   auto &manager = catalog::Manager::GetInstance();
   std::vector<ItemPointer> visible_tuple_locations;
-  std::map<oid_t, std::vector<oid_t>> visible_tuples;
 
 #ifdef LOG_TRACE_ENABLED
   int num_tuples_examined = 0;
@@ -215,7 +222,6 @@ bool IndexScanExecutor::ExecPrimaryIndexLookup() {
 #ifdef LOG_TRACE_ENABLED
     num_tuples_examined++;
 #endif
-
     // the following code traverses the version chain until a certain visible
     // version is found.
     // we should always find a visible version from a version chain.
@@ -248,8 +254,10 @@ bool IndexScanExecutor::ExecPrimaryIndexLookup() {
         // if passed evaluation, then perform write.
         if (eval == true) {
           LOG_TRACE("perform read operation");
-          auto res = transaction_manager.PerformRead(
-              current_txn, tuple_location, acquire_owner);
+          auto res = transaction_manager.PerformRead(current_txn,
+                                                     tuple_location,
+                                                     tile_group_header,
+                                                     acquire_owner);
           if (!res) {
             LOG_TRACE("read nothing");
             transaction_manager.SetTransactionResult(current_txn,
@@ -264,7 +272,7 @@ bool IndexScanExecutor::ExecPrimaryIndexLookup() {
       }
       // if the tuple is not visible.
       else {
-        PL_ASSERT(visibility == VisibilityType::INVISIBLE);
+        PELOTON_ASSERT(visibility == VisibilityType::INVISIBLE);
 
         LOG_TRACE("Invisible read: %u, %u", tuple_location.block,
                   tuple_location.offset);
@@ -327,24 +335,49 @@ bool IndexScanExecutor::ExecPrimaryIndexLookup() {
   LOG_TRACE("%ld tuples after pruning boundaries",
             visible_tuple_locations.size());
 
+  // Add the tuple locations to the result vector in the order returned by
+  // the index scan. We might end up reading the same tile group multiple
+  // times. However, this is necessary to adhere to the ORDER BY clause
+  oid_t current_tile_group_oid = INVALID_OID;
+  std::vector<oid_t> tuples;
+
   for (auto &visible_tuple_location : visible_tuple_locations) {
-    visible_tuples[visible_tuple_location.block]
-        .push_back(visible_tuple_location.offset);
+    if (current_tile_group_oid == INVALID_OID) {
+      current_tile_group_oid = visible_tuple_location.block;
+    }
+    if (current_tile_group_oid == visible_tuple_location.block) {
+      tuples.push_back(visible_tuple_location.offset);
+    } else {
+      // Since the tile_group_oids differ, fill in the current tile group
+      // into the result vector
+      auto &manager = catalog::Manager::GetInstance();
+      auto tile_group = manager.GetTileGroup(current_tile_group_oid);
+      std::unique_ptr<LogicalTile> logical_tile(LogicalTileFactory::GetTile());
+      // Add relevant columns to logical tile
+      logical_tile->AddColumns(tile_group, full_column_ids_);
+      logical_tile->AddPositionList(std::move(tuples));
+      if (column_ids_.size() != 0) {
+        logical_tile->ProjectColumns(full_column_ids_, column_ids_);
+      }
+      result_.push_back(logical_tile.release());
+
+      // Change the current_tile_group_oid and add the current tuple
+      tuples.clear();
+      current_tile_group_oid = visible_tuple_location.block;
+      tuples.push_back(visible_tuple_location.offset);
+    }
   }
 
-  // Construct a logical tile for each block
-  for (auto tuples : visible_tuples) {
-    auto &manager = catalog::Manager::GetInstance();
-    auto tile_group = manager.GetTileGroup(tuples.first);
-
+  // Add the remaining tuples to the result vector
+  if ((current_tile_group_oid != INVALID_OID) && (!tuples.empty())) {
+    auto tile_group = manager.GetTileGroup(current_tile_group_oid);
     std::unique_ptr<LogicalTile> logical_tile(LogicalTileFactory::GetTile());
     // Add relevant columns to logical tile
     logical_tile->AddColumns(tile_group, full_column_ids_);
-    logical_tile->AddPositionList(std::move(tuples.second));
+    logical_tile->AddPositionList(std::move(tuples));
     if (column_ids_.size() != 0) {
       logical_tile->ProjectColumns(full_column_ids_, column_ids_);
     }
-
     result_.push_back(logical_tile.release());
   }
 
@@ -357,8 +390,8 @@ bool IndexScanExecutor::ExecPrimaryIndexLookup() {
 
 bool IndexScanExecutor::ExecSecondaryIndexLookup() {
   LOG_TRACE("ExecSecondaryIndexLookup");
-  PL_ASSERT(!done_);
-  PL_ASSERT(index_->GetIndexType() != IndexConstraintType::PRIMARY_KEY);
+  PELOTON_ASSERT(!done_);
+  PELOTON_ASSERT(index_->GetIndexType() != IndexConstraintType::PRIMARY_KEY);
 
   std::vector<ItemPointer *> tuple_location_ptrs;
 
@@ -409,7 +442,6 @@ bool IndexScanExecutor::ExecSecondaryIndexLookup() {
   auto current_txn = executor_context_->GetTransaction();
 
   std::vector<ItemPointer> visible_tuple_locations;
-  std::map<oid_t, std::vector<oid_t>> visible_tuples;
   auto &manager = catalog::Manager::GetInstance();
 
   // Quickie Hack
@@ -463,8 +495,8 @@ bool IndexScanExecutor::ExecSecondaryIndexLookup() {
                   tuple_location.offset);
 
         // Further check if the version has the secondary key
-        ContainerTuple<storage::TileGroup> candidate_tuple(tile_group.get(),
-            tuple_location.offset);
+        ContainerTuple<storage::TileGroup> candidate_tuple(
+            tile_group.get(), tuple_location.offset);
 
         LOG_TRACE("candidate_tuple size: %s",
                   candidate_tuple.GetInfo().c_str());
@@ -483,13 +515,16 @@ bool IndexScanExecutor::ExecSecondaryIndexLookup() {
         bool eval = true;
         // if having predicate, then perform evaluation.
         if (predicate_ != nullptr) {
-          eval = predicate_->Evaluate(&candidate_tuple, nullptr,
-                                      executor_context_).IsTrue();
+          eval =
+              predicate_->Evaluate(&candidate_tuple, nullptr, executor_context_)
+                  .IsTrue();
         }
         // if passed evaluation, then perform write.
         if (eval == true) {
-          auto res = transaction_manager.PerformRead(
-              current_txn, tuple_location, acquire_owner);
+          auto res = transaction_manager.PerformRead(current_txn,
+                                                     tuple_location,
+                                                     tile_group_header,
+                                                     acquire_owner);
           if (!res) {
             transaction_manager.SetTransactionResult(current_txn,
                                                      ResultType::FAILURE);
@@ -508,7 +543,7 @@ bool IndexScanExecutor::ExecSecondaryIndexLookup() {
       }
       // if the tuple is not visible.
       else {
-        PL_ASSERT(visibility == VisibilityType::INVISIBLE);
+        PELOTON_ASSERT(visibility == VisibilityType::INVISIBLE);
 
         LOG_TRACE("Invisible read: %u, %u", tuple_location.block,
                   tuple_location.offset);
@@ -568,24 +603,49 @@ bool IndexScanExecutor::ExecSecondaryIndexLookup() {
   // Check whether the boundaries satisfy the required condition
   CheckOpenRangeWithReturnedTuples(visible_tuple_locations);
 
+  // Add the tuple locations to the result vector in the order returned by
+  // the index scan. We might end up reading the same tile group multiple
+  // times. However, this is necessary to adhere to the ORDER BY clause
+  oid_t current_tile_group_oid = INVALID_OID;
+  std::vector<oid_t> tuples;
+
   for (auto &visible_tuple_location : visible_tuple_locations) {
-    visible_tuples[visible_tuple_location.block]
-        .push_back(visible_tuple_location.offset);
+    if (current_tile_group_oid == INVALID_OID) {
+      current_tile_group_oid = visible_tuple_location.block;
+    }
+    if (current_tile_group_oid == visible_tuple_location.block) {
+      tuples.push_back(visible_tuple_location.offset);
+    } else {
+      // Since the tile_group_oids differ, fill in the current tile group
+      // into the result vector
+      auto &manager = catalog::Manager::GetInstance();
+      auto tile_group = manager.GetTileGroup(current_tile_group_oid);
+      std::unique_ptr<LogicalTile> logical_tile(LogicalTileFactory::GetTile());
+      // Add relevant columns to logical tile
+      logical_tile->AddColumns(tile_group, full_column_ids_);
+      logical_tile->AddPositionList(std::move(tuples));
+      if (column_ids_.size() != 0) {
+        logical_tile->ProjectColumns(full_column_ids_, column_ids_);
+      }
+      result_.push_back(logical_tile.release());
+
+      // Change the current_tile_group_oid and add the current tuple
+      tuples.clear();
+      current_tile_group_oid = visible_tuple_location.block;
+      tuples.push_back(visible_tuple_location.offset);
+    }
   }
 
-  // Construct a logical tile for each block
-  for (auto tuples : visible_tuples) {
-    auto &manager = catalog::Manager::GetInstance();
-    auto tile_group = manager.GetTileGroup(tuples.first);
-
+  // Add the remaining tuples (if any) to the result vector
+  if ((current_tile_group_oid != INVALID_OID) && (!tuples.empty())) {
+    auto tile_group = manager.GetTileGroup(current_tile_group_oid);
     std::unique_ptr<LogicalTile> logical_tile(LogicalTileFactory::GetTile());
     // Add relevant columns to logical tile
     logical_tile->AddColumns(tile_group, full_column_ids_);
-    logical_tile->AddPositionList(std::move(tuples.second));
+    logical_tile->AddPositionList(std::move(tuples));
     if (column_ids_.size() != 0) {
       logical_tile->ProjectColumns(full_column_ids_, column_ids_);
     }
-
     result_.push_back(logical_tile.release());
   }
 
@@ -623,8 +683,8 @@ void IndexScanExecutor::CheckOpenRangeWithReturnedTuples(
 
 bool IndexScanExecutor::CheckKeyConditions(const ItemPointer &tuple_location) {
   // The size of these three arrays must be the same
-  PL_ASSERT(key_column_ids_.size() == expr_types_.size());
-  PL_ASSERT(expr_types_.size() == values_.size());
+  PELOTON_ASSERT(key_column_ids_.size() == expr_types_.size());
+  PELOTON_ASSERT(expr_types_.size() == values_.size());
 
   LOG_TRACE("Examining key conditions for the returned tuple.");
 
@@ -664,20 +724,7 @@ bool IndexScanExecutor::CheckKeyConditions(const ItemPointer &tuple_location) {
     // To make the procedure more uniform, we interpret IN as EQUAL
     // and NOT IN as NOT EQUAL, and react based on expression type below
     // accordingly
-    /*if (expr_type == ExpressionType::COMPARE_IN) {
-      bool bret = lhs.InList(rhs);
-
-      if (bret == true) {
-        diff = VALUE_COMPARE_EQUAL;
-      } else {
-        diff = VALUE_COMPARE_NO_EQUAL;
-      }
-    } else {
-      diff = lhs.Compare(rhs);
-    }
-
-    LOG_TRACE("Difference : %d ", diff);*/
-    if (lhs.CompareEquals(rhs) == type::CmpBool::TRUE) {
+    if (lhs.CompareEquals(rhs) == CmpBool::CmpTrue) {
       switch (expr_type) {
         case ExpressionType::COMPARE_EQUAL:
         case ExpressionType::COMPARE_LESSTHANOREQUALTO:
@@ -695,7 +742,7 @@ bool IndexScanExecutor::CheckKeyConditions(const ItemPointer &tuple_location) {
                                ExpressionTypeToString(expr_type));
       }
     } else {
-      if (lhs.CompareLessThan(rhs) == type::CmpBool::TRUE) {
+      if (lhs.CompareLessThan(rhs) == CmpBool::CmpTrue) {
         switch (expr_type) {
           case ExpressionType::COMPARE_NOTEQUAL:
           case ExpressionType::COMPARE_LESSTHAN:
@@ -713,7 +760,7 @@ bool IndexScanExecutor::CheckKeyConditions(const ItemPointer &tuple_location) {
                                  ExpressionTypeToString(expr_type));
         }
       } else {
-        if (lhs.CompareGreaterThan(rhs) == type::CmpBool::TRUE) {
+        if (lhs.CompareGreaterThan(rhs) == CmpBool::CmpTrue) {
           switch (expr_type) {
             case ExpressionType::COMPARE_NOTEQUAL:
             case ExpressionType::COMPARE_GREATERTHAN:
@@ -755,7 +802,7 @@ void IndexScanExecutor::UpdatePredicate(
 
   std::vector<oid_t> key_column_ids;
 
-  PL_ASSERT(column_ids.size() <= column_ids_.size());
+  PELOTON_ASSERT(column_ids.size() <= column_ids_.size());
   // Get the real physical ids
   for (auto column_id : column_ids) {
     key_column_ids.push_back(column_ids_[column_id]);
@@ -765,8 +812,8 @@ void IndexScanExecutor::UpdatePredicate(
   }
 
   // Update values in index plan node
-  PL_ASSERT(key_column_ids.size() == values.size());
-  PL_ASSERT(key_column_ids_.size() == values_.size());
+  PELOTON_ASSERT(key_column_ids.size() == values.size());
+  PELOTON_ASSERT(key_column_ids_.size() == values_.size());
 
   // Find out the position (offset) where is key_column_id
   for (oid_t new_idx = 0; new_idx < key_column_ids.size(); new_idx++) {
@@ -810,8 +857,8 @@ void IndexScanExecutor::UpdatePredicate(
   }
 
   // Update the new value
-  index_predicate_.GetConjunctionListToSetup()[0]
-      .SetTupleColumnValue(index_.get(), key_column_ids, values);
+  index_predicate_.GetConjunctionListToSetup()[0].SetTupleColumnValue(
+      index_.get(), key_column_ids, values);
 }
 
 void IndexScanExecutor::ResetState() {

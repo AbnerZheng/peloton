@@ -13,17 +13,19 @@
 #include <cstdio>
 
 #include "catalog/catalog.h"
-#include "catalog/database_catalog.h"
-#include "catalog/table_catalog.h"
-#include "catalog/trigger_catalog.h"
+#include "catalog/proc_catalog.h"
+#include "catalog/system_catalogs.h"
 #include "common/harness.h"
 #include "concurrency/transaction_manager_factory.h"
 #include "executor/create_executor.h"
+#include "executor/create_function_executor.h"
 #include "executor/executor_context.h"
 #include "expression/abstract_expression.h"
 #include "expression/tuple_value_expression.h"
+#include "parser/create_function_statement.h"
 #include "parser/pg_trigger.h"
 #include "parser/postgresparser.h"
+#include "planner/create_function_plan.h"
 #include "planner/create_plan.h"
 #include "storage/data_table.h"
 #include "trigger/trigger.h"
@@ -45,7 +47,7 @@ TEST_F(CreateTests, CreatingDB) {
   auto txn = txn_manager.BeginTransaction();
 
   // Create plans with database name set.
-  planner::CreatePlan node("PelotonDB", CreateType::DB);
+  planner::CreatePlan node("pelotondb", CreateType::DB);
 
   std::unique_ptr<executor::ExecutorContext> context(
       new executor::ExecutorContext(txn));
@@ -56,9 +58,9 @@ TEST_F(CreateTests, CreatingDB) {
   executor.Execute();
   // Check if the database exists in the same txn
   EXPECT_EQ(0, catalog::Catalog::GetInstance()
-                   ->GetDatabaseObject("PelotonDB", txn)
+                   ->GetDatabaseObject("pelotondb", txn)
                    ->GetDatabaseName()
-                   .compare("PelotonDB"));
+                   .compare("pelotondb"));
 
   txn_manager.CommitTransaction(txn);
 
@@ -66,12 +68,12 @@ TEST_F(CreateTests, CreatingDB) {
   txn = txn_manager.BeginTransaction();
   // Check if the database exists in a new txn
   EXPECT_EQ(0, catalog::Catalog::GetInstance()
-                   ->GetDatabaseObject("PelotonDB", txn)
+                   ->GetDatabaseObject("pelotondb", txn)
                    ->GetDatabaseName()
-                   .compare("PelotonDB"));
+                   .compare("pelotondb"));
 
   // free the database just created
-  catalog::Catalog::GetInstance()->DropDatabaseWithName("PelotonDB", txn);
+  catalog::Catalog::GetInstance()->DropDatabaseWithName("pelotondb", txn);
 
   txn_manager.CommitTransaction(txn);
 }
@@ -97,8 +99,9 @@ TEST_F(CreateTests, CreatingTable) {
       new executor::ExecutorContext(txn));
 
   // Create plans
-  planner::CreatePlan node("department_table", DEFAULT_DB_NAME,
-                           std::move(table_schema), CreateType::TABLE);
+  planner::CreatePlan node("department_table", DEFAULT_SCHEMA_NAME,
+                           DEFAULT_DB_NAME, std::move(table_schema),
+                           CreateType::TABLE);
 
   // Create executer
   executor::CreateExecutor executor(&node, context.get());
@@ -106,13 +109,114 @@ TEST_F(CreateTests, CreatingTable) {
   executor.Init();
   executor.Execute();
 
-  EXPECT_EQ(1, (int)catalog::Catalog::GetInstance()
-                   ->GetDatabaseObject(DEFAULT_DB_NAME, txn)
-                   ->GetTableObjects()
-                   .size());
   txn_manager.CommitTransaction(txn);
 
   // free the database just created
+  txn = txn_manager.BeginTransaction();
+  catalog::Catalog::GetInstance()->DropDatabaseWithName(DEFAULT_DB_NAME, txn);
+  txn_manager.CommitTransaction(txn);
+}
+
+TEST_F(CreateTests, CreatingUDFs) {
+  // Bootstrap
+  auto &txn_manager = concurrency::TransactionManagerFactory::GetInstance();
+  auto txn = txn_manager.BeginTransaction();
+  // catalog::Catalog::GetInstance()->CreateDatabase(DEFAULT_DB_NAME, txn);
+  auto catalog = catalog::Catalog::GetInstance();
+  catalog->Bootstrap();
+  catalog->CreateDatabase(DEFAULT_DB_NAME, txn);
+
+  // Insert a table first
+  auto id_column = catalog::Column(
+      type::TypeId::DECIMAL, type::Type::GetTypeSize(type::TypeId::DECIMAL),
+      "balance", true);
+  auto name_column =
+      catalog::Column(type::TypeId::VARCHAR, 32, "dept_name", false);
+
+  // Schema
+  std::unique_ptr<catalog::Schema> table_schema(
+      new catalog::Schema({id_column, name_column}));
+
+  std::unique_ptr<executor::ExecutorContext> context(
+      new executor::ExecutorContext(txn));
+
+  // Create plans
+  planner::CreatePlan node("accounts", DEFAULT_SCHEMA_NAME, DEFAULT_DB_NAME,
+                           std::move(table_schema), CreateType::TABLE);
+
+  // Create executer
+  executor::CreateExecutor executor(&node, context.get());
+
+  executor.Init();
+  executor.Execute();
+  txn_manager.CommitTransaction(txn);
+
+  // Create statement
+  auto parser = parser::PostgresParser::GetInstance();
+  std::string query =
+      "CREATE FUNCTION increment "
+      "(balance DOUBLE) "
+      " RETURNS double AS $$ BEGIN RETURN balance + 1;"
+      "END; $$ LANGUAGE plpgsql;";
+  std::unique_ptr<parser::SQLStatementList> stmt_list(
+      parser.BuildParseTree(query).release());
+  EXPECT_TRUE(stmt_list->is_valid);
+  EXPECT_EQ(StatementType::CREATE_FUNC, stmt_list->GetStatement(0)->GetType());
+  auto create_function_stmt = static_cast<parser::CreateFunctionStatement *>(
+      stmt_list->GetStatement(0));
+  // create_function_stmt->TryBindDatabaseName(DEFAULT_DB_NAME);
+
+  // Create plans
+  planner::CreateFunctionPlan plan(create_function_stmt);
+
+  // plan type
+  EXPECT_EQ(PlanNodeType::CREATE_FUNC, plan.GetPlanNodeType());
+  // UDF name
+  EXPECT_EQ("increment", plan.GetFunctionName());
+
+  EXPECT_EQ(1, plan.GetNumParams());
+
+  std::vector<std::string> parameter_names = plan.GetFunctionParameterNames();
+  EXPECT_EQ(1, parameter_names.size());
+  EXPECT_EQ("balance", parameter_names[0]);
+
+  std::vector<type::TypeId> param_types = plan.GetFunctionParameterTypes();
+  EXPECT_EQ(1, param_types.size());
+  EXPECT_EQ(type::TypeId::DECIMAL, param_types[0]);
+
+  type::TypeId return_type = plan.GetReturnType();
+  EXPECT_EQ(type::TypeId::DECIMAL, return_type);
+
+  EXPECT_FALSE(plan.IsReplace());
+
+  // Execute the create trigger
+  txn = txn_manager.BeginTransaction();
+  std::unique_ptr<executor::ExecutorContext> context2(
+      new executor::ExecutorContext(txn));
+  executor::CreateFunctionExecutor createFuncExecutor(&plan, context2.get());
+  createFuncExecutor.Init();
+  createFuncExecutor.Execute();
+  txn_manager.CommitTransaction(txn);
+
+  // test pg_proc
+  txn = txn_manager.BeginTransaction();
+  // Check the effect of creation
+  auto &pg_proc = catalog::ProcCatalog::GetInstance();
+  std::string func_name = "increment";
+  std::vector<type::TypeId> arg_types{type::TypeId::DECIMAL};
+
+  auto inserted_proc = pg_proc.GetProcByName(func_name, arg_types, txn);
+  EXPECT_NE(nullptr, inserted_proc);
+  type::TypeId ret_type = inserted_proc->GetRetType();
+  EXPECT_EQ(type::TypeId::DECIMAL, ret_type);
+  std::string func = inserted_proc->GetName();
+  EXPECT_EQ("increment", func);
+  txn_manager.CommitTransaction(txn);
+
+  auto func_data = catalog->GetFunction(func_name, arg_types);
+  EXPECT_EQ(ret_type, func_data.return_type_);
+  EXPECT_NE(nullptr, func_data.func_context_);
+
   txn = txn_manager.BeginTransaction();
   catalog::Catalog::GetInstance()->DropDatabaseWithName(DEFAULT_DB_NAME, txn);
   txn_manager.CommitTransaction(txn);
@@ -122,10 +226,7 @@ TEST_F(CreateTests, CreatingTrigger) {
   // Bootstrap
   auto &txn_manager = concurrency::TransactionManagerFactory::GetInstance();
   auto txn = txn_manager.BeginTransaction();
-  // catalog::Catalog::GetInstance()->CreateDatabase(DEFAULT_DB_NAME, txn);
-  auto catalog = catalog::Catalog::GetInstance();
-  catalog->Bootstrap();
-  catalog->CreateDatabase(DEFAULT_DB_NAME, txn);
+  catalog::Catalog::GetInstance()->CreateDatabase(DEFAULT_DB_NAME, txn);
 
   // Insert a table first
   auto id_column = catalog::Column(
@@ -142,8 +243,8 @@ TEST_F(CreateTests, CreatingTrigger) {
       new executor::ExecutorContext(txn));
 
   // Create plans
-  planner::CreatePlan node("accounts", DEFAULT_DB_NAME, std::move(table_schema),
-                           CreateType::TABLE);
+  planner::CreatePlan node("accounts", DEFAULT_SCHEMA_NAME, DEFAULT_DB_NAME,
+                           std::move(table_schema), CreateType::TABLE);
 
   // Create executer
   executor::CreateExecutor executor(&node, context.get());
@@ -151,10 +252,6 @@ TEST_F(CreateTests, CreatingTrigger) {
   executor.Init();
   executor.Execute();
 
-  EXPECT_EQ(1, (int)catalog::Catalog::GetInstance()
-                   ->GetDatabaseObject(DEFAULT_DB_NAME, txn)
-                   ->GetTableObjects()
-                   .size());
   txn_manager.CommitTransaction(txn);
 
   // Create statement
@@ -202,13 +299,15 @@ TEST_F(CreateTests, CreatingTrigger) {
   EXPECT_EQ(ExpressionType::VALUE_TUPLE, left->GetExpressionType());
   EXPECT_EQ("old", static_cast<const expression::TupleValueExpression *>(left)
                        ->GetTableName());
-  EXPECT_EQ("balance", static_cast<const expression::TupleValueExpression *>(
-                           left)->GetColumnName());
+  EXPECT_EQ("balance",
+            static_cast<const expression::TupleValueExpression *>(left)
+                ->GetColumnName());
   EXPECT_EQ(ExpressionType::VALUE_TUPLE, right->GetExpressionType());
   EXPECT_EQ("new", static_cast<const expression::TupleValueExpression *>(right)
                        ->GetTableName());
-  EXPECT_EQ("balance", static_cast<const expression::TupleValueExpression *>(
-                           right)->GetColumnName());
+  EXPECT_EQ("balance",
+            static_cast<const expression::TupleValueExpression *>(right)
+                ->GetColumnName());
   // type (level, timing, event)
   auto trigger_type = plan.GetTriggerType();
   // level
@@ -233,8 +332,8 @@ TEST_F(CreateTests, CreatingTrigger) {
 
   // Check the effect of creation
   storage::DataTable *target_table =
-      catalog::Catalog::GetInstance()->GetTableWithName(DEFAULT_DB_NAME,
-                                                        "accounts", txn);
+      catalog::Catalog::GetInstance()->GetTableWithName(
+          DEFAULT_DB_NAME, DEFAULT_SCHEMA_NAME, "accounts", txn);
   txn_manager.CommitTransaction(txn);
   EXPECT_EQ(1, target_table->GetTriggerNumber());
   trigger::Trigger *new_trigger = target_table->GetTriggerByIndex(0);
@@ -274,8 +373,8 @@ TEST_F(CreateTests, CreatingTriggerWithoutWhen) {
       new executor::ExecutorContext(txn));
 
   // Create plans
-  planner::CreatePlan node("accounts", DEFAULT_DB_NAME, std::move(table_schema),
-                           CreateType::TABLE);
+  planner::CreatePlan node("accounts", DEFAULT_SCHEMA_NAME, DEFAULT_DB_NAME,
+                           std::move(table_schema), CreateType::TABLE);
 
   // Create executer
   executor::CreateExecutor executor(&node, context.get());
@@ -283,10 +382,6 @@ TEST_F(CreateTests, CreatingTriggerWithoutWhen) {
   executor.Init();
   executor.Execute();
 
-  EXPECT_EQ(1, (int)catalog::Catalog::GetInstance()
-                   ->GetDatabaseObject(DEFAULT_DB_NAME, txn)
-                   ->GetTableObjects()
-                   .size());
   txn_manager.CommitTransaction(txn);
 
   // Create statement
@@ -325,8 +420,8 @@ TEST_F(CreateTests, CreatingTriggerWithoutWhen) {
 
   // Check the effect of creation
   storage::DataTable *target_table =
-      catalog::Catalog::GetInstance()->GetTableWithName(DEFAULT_DB_NAME,
-                                                        "accounts", txn);
+      catalog::Catalog::GetInstance()->GetTableWithName(
+          DEFAULT_DB_NAME, DEFAULT_SCHEMA_NAME, "accounts", txn);
   txn_manager.CommitTransaction(txn);
   EXPECT_EQ(1, target_table->GetTriggerNumber());
   trigger::Trigger *new_trigger = target_table->GetTriggerByIndex(0);
@@ -347,7 +442,9 @@ TEST_F(CreateTests, CreatingTriggerInCatalog) {
   auto &txn_manager = concurrency::TransactionManagerFactory::GetInstance();
   auto txn = txn_manager.BeginTransaction();
   auto catalog = catalog::Catalog::GetInstance();
-  catalog->Bootstrap();
+  // NOTE: Catalog::GetInstance()->Bootstrap() has been called in previous tests
+  // you can only call it once!
+  // catalog->Bootstrap();
   catalog->CreateDatabase(DEFAULT_DB_NAME, txn);
 
   // Insert a table first
@@ -365,8 +462,8 @@ TEST_F(CreateTests, CreatingTriggerInCatalog) {
       new executor::ExecutorContext(txn));
 
   // Create plans
-  planner::CreatePlan node("accounts", DEFAULT_DB_NAME, std::move(table_schema),
-                           CreateType::TABLE);
+  planner::CreatePlan node("accounts", DEFAULT_SCHEMA_NAME, DEFAULT_DB_NAME,
+                           std::move(table_schema), CreateType::TABLE);
 
   // Create executer
   executor::CreateExecutor executor(&node, context.get());
@@ -374,10 +471,6 @@ TEST_F(CreateTests, CreatingTriggerInCatalog) {
   executor.Init();
   executor.Execute();
 
-  EXPECT_EQ(1, (int)catalog::Catalog::GetInstance()
-                   ->GetDatabaseObject(DEFAULT_DB_NAME, txn)
-                   ->GetTableObjects()
-                   .size());
   txn_manager.CommitTransaction(txn);
 
   // Create statement
@@ -409,10 +502,15 @@ TEST_F(CreateTests, CreatingTriggerInCatalog) {
 
   // check whether the trigger catalog table contains this new trigger
   auto table_object = catalog::Catalog::GetInstance()->GetTableObject(
-      DEFAULT_DB_NAME, "accounts", txn);
-  auto trigger_list = catalog::TriggerCatalog::GetInstance().GetTriggersByType(
-      table_object->GetTableOid(),
-      (TRIGGER_TYPE_ROW | TRIGGER_TYPE_BEFORE | TRIGGER_TYPE_UPDATE), txn);
+      DEFAULT_DB_NAME, DEFAULT_SCHEMA_NAME, "accounts", txn);
+  auto trigger_list =
+      catalog::Catalog::GetInstance()
+          ->GetSystemCatalogs(table_object->GetDatabaseOid())
+          ->GetTriggerCatalog()
+          ->GetTriggersByType(
+              table_object->GetTableOid(),
+              (TRIGGER_TYPE_ROW | TRIGGER_TYPE_BEFORE | TRIGGER_TYPE_UPDATE),
+              txn);
 
   txn_manager.CommitTransaction(txn);
 

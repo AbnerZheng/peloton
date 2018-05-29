@@ -21,7 +21,7 @@
 #include "expression/expression_util.h"
 #include "storage/data_table.h"
 #include "storage/storage_manager.h"
-#include "type/types.h"
+#include "common/internal_types.h"
 
 namespace peloton {
 namespace planner {
@@ -105,7 +105,7 @@ bool SeqScanPlan::SerializeTo(SerializeOutput &output) const {
 
   // Write the total length
   int32_t sz = static_cast<int32_t>(output.Position() - start - sizeof(int));
-  PL_ASSERT(sz > 0);
+  PELOTON_ASSERT(sz > 0);
   output.WriteIntAt(start, sz);
 
   return true;
@@ -131,7 +131,7 @@ bool SeqScanPlan::DeserializeFrom(SerializeInput &input) {
   // Read the type
   UNUSED_ATTRIBUTE PlanNodeType plan_type =
       (PlanNodeType)input.ReadEnumInSingleByte();
-  PL_ASSERT(plan_type == GetPlanNodeType());
+  PELOTON_ASSERT(plan_type == GetPlanNodeType());
 
   // Read database id
   oid_t database_oid = input.ReadInt();
@@ -246,18 +246,6 @@ int SeqScanPlan::SerializeSize() const {
   return size;
 }
 
-oid_t SeqScanPlan::GetColumnID(std::string col_name) {
-  auto &columns = GetTable()->GetSchema()->GetColumns();
-  oid_t index = -1;
-  for (oid_t i = 0; i < columns.size(); ++i) {
-    if (columns[i].GetName() == col_name) {
-      index = i;
-      break;
-    }
-  }
-  return index;
-}
-
 void SeqScanPlan::SetParameterValues(std::vector<type::Value> *values) {
   LOG_TRACE("Setting parameter values in Sequential Scan");
 
@@ -292,7 +280,7 @@ bool SeqScanPlan::operator==(const AbstractPlan &rhs) const {
   auto &other = static_cast<const planner::SeqScanPlan &>(rhs);
   auto *table = GetTable();
   auto *other_table = other.GetTable();
-  PL_ASSERT(table && other_table);
+  PELOTON_ASSERT(table && other_table);
   if (*table != *other_table)
     return false;
 

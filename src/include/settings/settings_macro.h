@@ -24,19 +24,25 @@
   #ifdef SETTING_int
     #undef SETTING_int
   #endif
+  #ifdef SETTING_double
+    #undef SETTING_double
+  #endif
   #ifdef SETTING_bool
     #undef SETTING_bool
   #endif
   #ifdef SETTING_string
     #undef SETTING_string
   #endif
-  #define SETTING_int(name, description, default_value, is_mutable, is_persistent)     \
+  #define SETTING_int(name, description, default_value, min_value, max_value, is_mutable, is_persistent)        \
     DEFINE_int32(name, default_value, description);
 
-  #define SETTING_bool(name, description, default_value, is_mutable, is_persistent)    \
+  #define SETTING_double(name, description, default_value, min_value, max_value, is_mutable, is_persistent)     \
+    DEFINE_double(name, default_value, description);
+
+  #define SETTING_bool(name, description, default_value, is_mutable, is_persistent)                             \
     DEFINE_bool(name, default_value, description);
 
-  #define SETTING_string(name, description, default_value, is_mutable, is_persistent)  \
+  #define SETTING_string(name, description, default_value, is_mutable, is_persistent)                           \
     DEFINE_string(name, default_value, description);
 #endif
 
@@ -44,19 +50,25 @@
   #ifdef SETTING_int
     #undef SETTING_int
   #endif
+  #ifdef SETTING_double
+    #undef SETTING_double
+  #endif
   #ifdef SETTING_bool
     #undef SETTING_bool
   #endif
   #ifdef SETTING_string
     #undef SETTING_string
   #endif
-  #define SETTING_int(name, description, default_value, is_mutable, is_persistent)     \
+  #define SETTING_int(name, description, default_value, min_value, max_value, is_mutable, is_persistent)        \
     DECLARE_int32(name);
 
-  #define SETTING_bool(name, description, default_value, is_mutable, is_persistent)    \
+  #define SETTING_double(name, description, default_value, min_value, max_value, is_mutable, is_persistent)     \
+    DECLARE_double(name);
+
+  #define SETTING_bool(name, description, default_value, is_mutable, is_persistent)                             \
     DECLARE_bool(name);
 
-  #define SETTING_string(name, description, default_value, is_mutable, is_persistent)  \
+  #define SETTING_string(name, description, default_value, is_mutable, is_persistent)                           \
     DECLARE_string(name);
 #endif
 
@@ -64,31 +76,49 @@
   #ifdef SETTING_int
     #undef SETTING_int
   #endif
+  #ifdef SETTING_double
+    #undef SETTING_double
+  #endif
   #ifdef SETTING_bool
     #undef SETTING_bool
   #endif
   #ifdef SETTING_string
     #undef SETTING_string
   #endif
-  #define SETTING_int(name, description, default_value, is_mutable, is_persistent)     \
-      DefineSetting(                                                                   \
-        peloton::settings::SettingId::name,                                            \
-        #name, type::ValueFactory::GetIntegerValue(FLAGS_##name),                      \
-        description, type::ValueFactory::GetIntegerValue(default_value),               \
+  #define SETTING_int(name, description, default_value, min_value, max_value, is_mutable, is_persistent)      \
+      DefineSetting(                                                                                          \
+        peloton::settings::SettingId::name,                                                                   \
+        #name, type::ValueFactory::GetIntegerValue(FLAGS_##name),                                             \
+        description, type::ValueFactory::GetIntegerValue(default_value),                                      \
+        type::ValueFactory::GetIntegerValue(min_value),                                                       \
+        type::ValueFactory::GetIntegerValue(max_value),                                                       \
         is_mutable, is_persistent);
 
-  #define SETTING_bool(name, description, default_value, is_mutable, is_persistent)    \
-      DefineSetting(                                                                   \
-        peloton::settings::SettingId::name,                                            \
-        #name, type::ValueFactory::GetBooleanValue(FLAGS_##name),                      \
-        description, type::ValueFactory::GetBooleanValue(default_value),               \
+  #define SETTING_double(name, description, default_value, min_value, max_value, is_mutable, is_persistent)   \
+      DefineSetting(                                                                                          \
+        peloton::settings::SettingId::name,                                                                   \
+        #name, type::ValueFactory::GetDecimalValue(FLAGS_##name),                                             \
+        description, type::ValueFactory::GetDecimalValue(default_value),                                      \
+        type::ValueFactory::GetDecimalValue(min_value),                                                       \
+        type::ValueFactory::GetDecimalValue(max_value),                                                       \
         is_mutable, is_persistent);
 
-  #define SETTING_string(name, description, default_value, is_mutable, is_persistent)  \
-      DefineSetting(                                                                   \
-        peloton::settings::SettingId::name,                                            \
-        #name, type::ValueFactory::GetVarcharValue(FLAGS_##name),                      \
-        description, type::ValueFactory::GetVarcharValue(default_value),               \
+  #define SETTING_bool(name, description, default_value, is_mutable, is_persistent)                           \
+      DefineSetting(                                                                                          \
+        peloton::settings::SettingId::name,                                                                   \
+        #name, type::ValueFactory::GetBooleanValue(FLAGS_##name),                                             \
+        description, type::ValueFactory::GetBooleanValue(default_value),                                      \
+        type::ValueFactory::GetBooleanValue(default_value),                                                   \
+        type::ValueFactory::GetBooleanValue(default_value),                                                   \
+        is_mutable, is_persistent);
+
+  #define SETTING_string(name, description, default_value, is_mutable, is_persistent)                         \
+      DefineSetting(                                                                                          \
+        peloton::settings::SettingId::name,                                                                   \
+        #name, type::ValueFactory::GetVarcharValue(FLAGS_##name),                                             \
+        description, type::ValueFactory::GetVarcharValue(default_value),                                      \
+        type::ValueFactory::GetVarcharValue(default_value),                                                   \
+        type::ValueFactory::GetVarcharValue(default_value),                                                   \
         is_mutable, is_persistent);
 #endif
 
@@ -96,18 +126,24 @@
   #ifdef SETTING_int
     #undef SETTING_int
   #endif
+  #ifdef SETTING_double
+    #undef SETTING_double
+  #endif
   #ifdef SETTING_bool
     #undef SETTING_bool
   #endif
   #ifdef SETTING_string
     #undef SETTING_string
   #endif
-  #define SETTING_int(name, description, default_value, is_mutable, is_persistent)     \
+  #define SETTING_int(name, description, default_value, min_value, max_value, is_mutable, is_persistent)        \
     name,
 
-  #define SETTING_bool(name, description, default_value, is_mutable, is_persistent)    \
+  #define SETTING_double(name, description, default_value, min_value, max_value, is_mutable, is_persistent)     \
     name,
 
-  #define SETTING_string(name, description, default_value, is_mutable, is_persistent)  \
+  #define SETTING_bool(name, description, default_value, is_mutable, is_persistent)                             \
+    name,
+
+  #define SETTING_string(name, description, default_value, is_mutable, is_persistent)                           \
     name,
 #endif

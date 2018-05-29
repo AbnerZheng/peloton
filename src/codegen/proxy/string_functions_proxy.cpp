@@ -6,26 +6,26 @@
 //
 // Identification: src/codegen/proxy/string_functions_proxy.cpp
 //
-// Copyright (c) 2015-2017, Carnegie Mellon University Database Group
+// Copyright (c) 2015-2018, Carnegie Mellon University Database Group
 //
 //===----------------------------------------------------------------------===//
 
 #include "codegen/proxy/string_functions_proxy.h"
 
-#include "codegen/proxy/type_builder.h"
-#include "function/string_functions.h"
+#include "codegen/proxy/executor_context_proxy.h"
 
 namespace peloton {
 namespace codegen {
 
-// StrWithLen Struct (Used by Substr function)
-DEFINE_TYPE(StrWithLen, "peloton::StrWithLen", MEMBER(str), MEMBER(length));
+// StrWithLen struct
+DEFINE_TYPE(StrWithLen, "peloton::StrWithLen", str, length);
 
 // String Function
 DEFINE_METHOD(peloton::function, StringFunctions, Ascii);
 DEFINE_METHOD(peloton::function, StringFunctions, Like);
 DEFINE_METHOD(peloton::function, StringFunctions, Length);
 DEFINE_METHOD(peloton::function, StringFunctions, Substr);
+DEFINE_METHOD(peloton::function, StringFunctions, Repeat);
 
 // Trim-related functions
 DEFINE_METHOD(peloton::function, StringFunctions, BTrim);

@@ -22,14 +22,16 @@
 #include "common/macros.h"
 #include "storage/abstract_table.h"
 #include "storage/tile_group.h"
-#include "type/types.h"
+#include "internal_types.h"
 #include "type/value.h"
 
 namespace peloton {
 
-///
-/// \brief Container Tuple wrapping a tile group or logical tile.
-///
+/**
+ * A generic wrapper around a templated "tuple" type
+ *
+ * @tparam T The actual container used to retrieve column values
+ */
 template <class T>
 class ContainerTuple : public AbstractTuple {
  public:
@@ -53,21 +55,21 @@ class ContainerTuple : public AbstractTuple {
   void SetValue(UNUSED_ATTRIBUTE oid_t column_id,
                 UNUSED_ATTRIBUTE const type::Value &value) override {}
 
-  /// \brief Get the value at the given column id
   type::Value GetValue(oid_t column_id) const override {
-    PL_ASSERT(container_ != nullptr);
+    PELOTON_ASSERT(container_ != nullptr);
     return container_->GetValue(tuple_id_, column_id);
   }
 
-  /// \brief Get the raw location of the tuple's contents
   char *GetData() const override {
-    // NOTE: We can't get a table tuple from a tilegroup or logical tile without
-    //       materializing it. So, this must not be used.
     throw NotImplementedException(
         "GetData() not supported for container tuples.");
   }
 
-  /// \brief Compute the hash value based on all valid columns and a given seed
+  /**
+   * @brief Compute the hash value based on all valid columns and a given seed.
+   *
+   * @param seed The seed value to use as part of the hash computation
+   */
   size_t HashCode(size_t seed = 0) const {
     if (column_ids_) {
       for (auto &column_itr : *column_ids_) {
@@ -84,15 +86,21 @@ class ContainerTuple : public AbstractTuple {
     return seed;
   }
 
-  /// \brief Compare whether this tuple equals to other value-wise. Assume the
-  /// schema of other tuple. Is the same as this. No check.
+  /**
+   * Compare whether this tuple equals to other value-wise. Assume the schema of
+   * other tuple. Is the same as this. No check.
+   *
+   * @param other The tuple we're comparing against
+   *
+   * @return True if this tuple is equal to the provided tuple
+   */
   bool EqualsNoSchemaCheck(const ContainerTuple<T> &other) const {
     if (column_ids_) {
       if (column_ids_->size() != other.column_ids_->size()) return false;
       for (size_t idx = 0; idx < column_ids_->size(); idx++) {
         type::Value lhs = (GetValue(column_ids_->at(idx)));
         type::Value rhs = (other.GetValue(other.column_ids_->at(idx)));
-        if (lhs.CompareNotEquals(rhs) == type::CmpBool::TRUE) {
+        if (lhs.CompareNotEquals(rhs) == CmpBool::CmpTrue) {
           return false;
         }
       }
@@ -101,13 +109,12 @@ class ContainerTuple : public AbstractTuple {
       for (size_t column_itr = 0; column_itr < column_count; column_itr++) {
         type::Value lhs = (GetValue(column_itr));
         type::Value rhs = (other.GetValue(column_itr));
-        if (lhs.CompareNotEquals(rhs) == type::CmpBool::TRUE) return false;
+        if (lhs.CompareNotEquals(rhs) == CmpBool::CmpTrue) return false;
       }
     }
     return true;
   }
 
-  /// \brief Get a string representation for debugging
   const std::string GetInfo() const override {
     std::stringstream os;
     os << "(";
@@ -142,21 +149,20 @@ class ContainerTuple : public AbstractTuple {
   const std::vector<oid_t> *column_ids_ = nullptr;
 };
 
-///
-/// \brief A hashing functor for ContainerTuple abstractions
-///
+/**
+ * @brief A hashing functor for the ContainerTuple abstraction
+ */
 template <class T>
 struct ContainerTupleHasher
     : std::unary_function<ContainerTuple<T>, std::size_t> {
-  /// \brief Generate a 64-bit number for the key value
   size_t operator()(const ContainerTuple<T> &tuple) const {
     return tuple.HashCode();
   }
 };
 
-///
-/// \brief Comparator functor for ContainerTuple abstractions
-///
+/**
+ * @brief Comparator functor for the ContainerTuple abstraction
+ */
 template <class T>
 class ContainerTupleComparator {
  public:
@@ -166,11 +172,11 @@ class ContainerTupleComparator {
   }
 };
 
-///
-/// \brief A convenient wrapper to interpret a vector of values as a tuple. No
-/// need to construct a schema. The caller should make sure there's no
-/// out-of-bound calls.
-///
+/**
+ * @brief A convenient wrapper to interpret a vector of values as a tuple. No
+ * need to construct a schema. The caller should make sure there's no
+ * out-of-bound calls.
+ */
 template <>
 class ContainerTuple<std::vector<type::Value>> : public AbstractTuple {
  public:
@@ -181,10 +187,9 @@ class ContainerTuple<std::vector<type::Value>> : public AbstractTuple {
 
   ContainerTuple(std::vector<type::Value> *container) : container_(container) {}
 
-  /// \brief Get the value at the given column id
   type::Value GetValue(oid_t column_id) const override {
-    PL_ASSERT(container_ != nullptr);
-    PL_ASSERT(column_id < container_->size());
+    PELOTON_ASSERT(container_ != nullptr);
+    PELOTON_ASSERT(column_id < container_->size());
 
     return (*container_)[column_id];
   }
@@ -192,7 +197,6 @@ class ContainerTuple<std::vector<type::Value>> : public AbstractTuple {
   void SetValue(UNUSED_ATTRIBUTE oid_t column_id,
                 UNUSED_ATTRIBUTE const type::Value &value) override {}
 
-  /// \brief Get the raw location of the tuple's contents
   char *GetData() const override {
     // NOTE: We can't.Get a table tuple from a tilegroup or logical tile
     // without materializing it. So, this must not be used.
@@ -208,21 +212,18 @@ class ContainerTuple<std::vector<type::Value>> : public AbstractTuple {
     return seed;
   }
 
-  /// \brief Compare whether this tuple equals to other value-wise. Assume the
-  /// schema of other tuple.Is the same as this. No check.
   bool EqualsNoSchemaCheck(
       const ContainerTuple<std::vector<type::Value>> &other) const {
-    PL_ASSERT(container_->size() == other.container_->size());
+    PELOTON_ASSERT(container_->size() == other.container_->size());
 
     for (size_t column_itr = 0; column_itr < container_->size(); column_itr++) {
       type::Value lhs = GetValue(column_itr);
       type::Value rhs = other.GetValue(column_itr);
-      if (lhs.CompareNotEquals(rhs) == type::CmpBool::TRUE) return false;
+      if (lhs.CompareNotEquals(rhs) == CmpBool::CmpTrue) return false;
     }
     return true;
   }
 
-  /// \brief Get a string representation for debugging
   const std::string GetInfo() const override {
     std::stringstream os;
     os << "(";
@@ -256,15 +257,19 @@ class ContainerTuple<storage::TileGroup> : public AbstractTuple {
                  const std::vector<oid_t> *column_ids)
       : container_(container), tuple_id_(tuple_id), column_ids_(column_ids) {}
 
-  /// \brief Get the value at the given column id
   type::Value GetValue(oid_t column_id) const override {
-    PL_ASSERT(container_ != nullptr);
-    return container_->GetValue(tuple_id_, column_id);
+    PELOTON_ASSERT(container_ != nullptr);
+    auto col_id =
+        (column_ids_ != nullptr ? column_ids_->at(column_id) : column_id);
+    return container_->GetValue(tuple_id_, col_id);
   }
 
   void SetValue(oid_t column_id, const type::Value &value) override {
+    PELOTON_ASSERT(container_ != nullptr);
     type::Value val = value.Copy();
-    container_->SetValue(val, tuple_id_, column_id);
+    auto col_id =
+        (column_ids_ != nullptr ? column_ids_->at(column_id) : column_id);
+    container_->SetValue(val, tuple_id_, col_id);
   }
 
   char *GetData() const override {
@@ -274,7 +279,6 @@ class ContainerTuple<storage::TileGroup> : public AbstractTuple {
         "GetData() not supported for container tuples.");
   }
 
-  /// \brief Get a string representation for debugging
   const std::string GetInfo() const override {
     std::stringstream os;
     os << "(";

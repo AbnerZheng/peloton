@@ -16,7 +16,7 @@
 #include "catalog/manager.h"
 #include "catalog/schema.h"
 #include "index/scan_optimizer.h"
-#include "storage/tuple.h"
+#include "settings/settings_manager.h"
 #include "type/ephemeral_pool.h"
 
 namespace peloton {
@@ -24,25 +24,20 @@ namespace index {
 
 bool IndexMetadata::index_default_visibility = true;
 
-/*
- * GetColumnCount() - Returns the number of indexed columns
- *
- * Please note that this returns the column count of columns in the base
- * table that are indexed, i.e. not the column count of the base table
- */
+// Returns the number of indexed columns. Please note that this returns the
+// column count of columns in the base table that are indexed, i.e. not the
+// column count of the base table
 oid_t IndexMetadata::GetColumnCount() const {
   return GetKeySchema()->GetColumnCount();
 }
 
-/*
- * Constructor - Initializes tuple key to index mapping
- *
- * NOTE: This metadata object owns key_schema since it is specially
- * constructed for the index
- *
- * However, tuple schema belongs to the table, such that this metadata should
- * not destroy the tuple schema object on destruction
- */
+// Initializes tuple key to index mapping
+//
+// NOTE: This metadata object owns key_schema since it is specially constructed
+// for the index
+//
+// However, tuple schema belongs to the table, such that this metadata should
+// not destroy the tuple schema object on destruction
 IndexMetadata::IndexMetadata(std::string index_name, oid_t index_oid,
                              oid_t table_oid, oid_t database_oid,
                              IndexType index_type,
@@ -75,7 +70,7 @@ IndexMetadata::IndexMetadata(std::string index_name, oid_t index_oid,
 
     // The tuple column must be included into key_attrs, otherwise
     // the construction argument is malformed
-    PL_ASSERT(tuple_column_id < tuple_attrs.size());
+    PELOTON_ASSERT(tuple_column_id < tuple_attrs.size());
 
     tuple_attrs[tuple_column_id] = i;
   }
@@ -117,17 +112,13 @@ const std::string IndexMetadata::GetInfo() const {
   return os.str();
 }
 
-/////////////////////////////////////////////////////////////////////
-// Member function definition for class Index
-/////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////
+/// Member function definition for class Index
+////////////////////////////////////////////////////////////////////////////////
 
-/*
- * Constructor
- *
- * NOTE: Though Index object receives the index metadata pointer
- * from the caller, the Index object owns that metadata and is responsible
- * for destructing the metadata object on its own destruction
- */
+// NOTE: Though Index object receives the index metadata pointer from the
+// caller, the Index object owns that metadata and is responsible for
+// destructing the metadata object on its own destruction
 Index::Index(IndexMetadata *metadata)
     : metadata(metadata), indexed_tile_group_offset(0) {
   // This is redundant
@@ -142,9 +133,6 @@ Index::Index(IndexMetadata *metadata)
   return;
 }
 
-/*
- * Destructor
- */
 Index::~Index() {
   // Free metadata which frees the key schema but not tuple schema
   // This is passed in as construction argument but Index object is
@@ -157,27 +145,24 @@ Index::~Index() {
   return;
 }
 
-/*
- * TupleColumnToKeyColumn() - Converts a column ID in the table to a column ID
- *                            in the index key
- *
- * This function accepts an oid_t which must be in the range of table column
- * ID, and returns a oid_t which is also inside the range of key columns.
- *
- * If the table column does not have a corresponding key column then assertion
- * would fail. In this case the caller does not have to check since assertion
- * fails inside this function
- */
+// Converts a column ID in the table to a column ID in the index key
+//
+// This function accepts an oid_t which must be in the range of table column
+// ID, and returns a oid_t which is also inside the range of key columns.
+//
+// If the table column does not have a corresponding key column then assertion
+// would fail. In this case the caller does not have to check since assertion
+// fails inside this function
 oid_t Index::TupleColumnToKeyColumn(oid_t tuple_column_id) const {
   // This stores the mapping
   const std::vector<oid_t> &mapping = metadata->GetTupleToIndexMapping();
 
   // First check whether the table column ID is valid
-  PL_ASSERT(tuple_column_id < mapping.size());
+  PELOTON_ASSERT(tuple_column_id < mapping.size());
   oid_t key_column_id = mapping[tuple_column_id];
 
   // Then check the table column actually have a index key column
-  PL_ASSERT(key_column_id != INVALID_OID);
+  PELOTON_ASSERT(key_column_id != INVALID_OID);
 
   return key_column_id;
 }
@@ -202,11 +187,8 @@ void Index::ScanTest(const std::vector<type::Value> &value_list,
   return;
 }
 
-/*
- * Compare() - Check whether a given index key satisfies a predicate
- *
- * The predicate has the same specification as those in Scan()
- */
+// Check whether a given index key satisfies a predicate. The predicate has the
+// same specification as those in Scan()
 bool Index::Compare(const AbstractTuple &index_key,
                     const std::vector<oid_t> &tuple_column_id_list,
                     const std::vector<ExpressionType> &expr_list,
@@ -214,8 +196,8 @@ bool Index::Compare(const AbstractTuple &index_key,
   // int diff;
 
   // The size of these three arrays must be the same
-  PL_ASSERT(tuple_column_id_list.size() == expr_list.size());
-  PL_ASSERT(expr_list.size() == value_list.size());
+  PELOTON_ASSERT(tuple_column_id_list.size() == expr_list.size());
+  PELOTON_ASSERT(expr_list.size() == value_list.size());
 
   // Need the mapping
   const IndexMetadata *metadata_p = GetMetadata();
@@ -271,7 +253,7 @@ bool Index::Compare(const AbstractTuple &index_key,
     }
 
     LOG_TRACE("Difference : %d ", diff);*/
-    if (lhs.CompareEquals(rhs) == type::CmpBool::TRUE) {
+    if (lhs.CompareEquals(rhs) == CmpBool::CmpTrue) {
       switch (expr_type) {
         case ExpressionType::COMPARE_EQUAL:
         case ExpressionType::COMPARE_LESSTHANOREQUALTO:
@@ -289,7 +271,7 @@ bool Index::Compare(const AbstractTuple &index_key,
                                ExpressionTypeToString(expr_type));
       }
     } else {
-      if (lhs.CompareLessThan(rhs) == type::CmpBool::TRUE) {
+      if (lhs.CompareLessThan(rhs) == CmpBool::CmpTrue) {
         switch (expr_type) {
           case ExpressionType::COMPARE_NOTEQUAL:
           case ExpressionType::COMPARE_LESSTHAN:
@@ -307,7 +289,7 @@ bool Index::Compare(const AbstractTuple &index_key,
                                  ExpressionTypeToString(expr_type));
         }
       } else {
-        if (lhs.CompareGreaterThan(rhs) == type::CmpBool::TRUE) {
+        if (lhs.CompareGreaterThan(rhs) == CmpBool::CmpTrue) {
           switch (expr_type) {
             case ExpressionType::COMPARE_NOTEQUAL:
             case ExpressionType::COMPARE_GREATERTHAN:
@@ -345,48 +327,31 @@ const std::string Index::GetInfo() const {
   return os.str();
 }
 
-/**
- * @brief Increase the number of tuples in this table
- * @param amount amount to increase
- */
+// Increase the number of tuples in this table
 void Index::IncreaseNumberOfTuplesBy(const size_t amount) {
   number_of_tuples += amount;
   dirty = true;
 }
 
-/**
- * @brief Decrease the number of tuples in this table
- * @param amount amount to decrease
- */
+// Decrease the number of tuples in this table
 void Index::DecreaseNumberOfTuplesBy(const size_t amount) {
   number_of_tuples -= amount;
   dirty = true;
 }
 
-/**
- * @brief Set the number of tuples in this table
- * @param num_tuples number of tuples
- */
+// Set the number of tuples in this table
 void Index::SetNumberOfTuples(const size_t num_tuples) {
   number_of_tuples = num_tuples;
   dirty = true;
 }
 
-/**
- * @brief Get the number of tuples in this table
- * @return number of tuples
- */
+// Get the number of tuples in this table
 size_t Index::GetNumberOfTuples() const { return number_of_tuples; }
 
-/**
- * @brief return dirty flag
- * @return dirty flag
- */
+// Return dirty flag
 bool Index::IsDirty() const { return dirty; }
 
-/**
- * @brief Reset dirty flag
- */
+// Reset dirty flag
 void Index::ResetDirty() { dirty = false; }
 
 }  // namespace index

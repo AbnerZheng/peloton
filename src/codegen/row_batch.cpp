@@ -16,9 +16,12 @@
 
 #include "codegen/compilation_context.h"
 #include "codegen/lang/if.h"
+#include "codegen/lang/loop.h"
 #include "codegen/lang/vectorized_loop.h"
+#include "codegen/vector.h"
 #include "common/exception.h"
 #include "common/logger.h"
+#include "planner/attribute_info.h"
 
 namespace peloton {
 namespace codegen {
@@ -123,14 +126,14 @@ codegen::Value RowBatch::Row::DeriveValue(
 
   // Not in cache, derive using expression translator
   auto *translator = batch_.context_.GetTranslator(expr);
-  PL_ASSERT(translator != nullptr);
+  PELOTON_ASSERT(translator != nullptr);
   auto ret = translator->DeriveValue(codegen, *this);
   cache_.insert(std::make_pair(&expr, ret));
   return ret;
 }
 
 void RowBatch::Row::RegisterAttributeValue(const planner::AttributeInfo *ai,
-                                           codegen::Value &val) {
+                                           const codegen::Value &val) {
   // Here the caller wants to register a temporary attribute value for the row
   // that overrides any attribute accessor available for the underlying batch
   // We place the value in the cache to ensure we don't go through the normal
@@ -167,7 +170,7 @@ llvm::Value *RowBatch::Row::GetTID(CodeGen &codegen) {
   if (tid_ == nullptr) {
     tid_ = batch_.GetPhysicalPosition(codegen, *this);
   }
-  PL_ASSERT(tid_ != nullptr);
+  PELOTON_ASSERT(tid_ != nullptr);
   return tid_;
 }
 

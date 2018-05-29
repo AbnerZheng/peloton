@@ -12,7 +12,6 @@
 
 #pragma once
 
-#include "codegen/compilation_context.h"
 #include "codegen/operator/operator_translator.h"
 #include "codegen/pipeline.h"
 
@@ -35,7 +34,7 @@ class ProjectionTranslator : public OperatorTranslator {
                        CompilationContext &context, Pipeline &pipeline);
 
   // Nothing to initialize
-  void InitializeState() override {}
+  void InitializeQueryState() override {}
 
   // No helper functions
   void DefineAuxiliaryFunctions() override {}
@@ -47,10 +46,7 @@ class ProjectionTranslator : public OperatorTranslator {
   void Consume(ConsumerContext &context, RowBatch::Row &row) const override;
 
   // No state to tear down
-  void TearDownState() override {}
-
-  // Get the stringified name of this translator
-  std::string GetName() const override;
+  void TearDownQueryState() override {}
 
   // Helpers
   static void PrepareProjection(CompilationContext &context,
@@ -59,10 +55,6 @@ class ProjectionTranslator : public OperatorTranslator {
   static void AddNonTrivialAttributes(
       RowBatch &row_batch, const planner::ProjectInfo &projection_info,
       std::vector<RowBatch::ExpressionAccess> &accessors);
-
- private:
-  // The aggregation plan
-  const planner::ProjectionPlan &plan_;
 };
 
 }  // namespace codegen

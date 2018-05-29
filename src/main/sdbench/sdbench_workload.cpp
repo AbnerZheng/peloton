@@ -20,21 +20,21 @@
 #include <unordered_map>
 #include <vector>
 
-#include "brain/index_tuner.h"
-#include "brain/layout_tuner.h"
-#include "brain/sample.h"
+#include "tuning/index_tuner.h"
+#include "tuning/layout_tuner.h"
+#include "tuning/sample.h"
 
 #include "benchmark/sdbench/sdbench_loader.h"
 #include "benchmark/sdbench/sdbench_workload.h"
 
 #include "catalog/manager.h"
 #include "catalog/schema.h"
+#include "common/internal_types.h"
 #include "common/logger.h"
 #include "common/macros.h"
 #include "common/timer.h"
 #include "concurrency/transaction_context.h"
 #include "concurrency/transaction_manager_factory.h"
-#include "type/types.h"
 #include "type/value.h"
 #include "type/value_factory.h"
 
@@ -99,10 +99,10 @@ oid_t sdbench_tuple_counter = -1000000;
 std::vector<oid_t> column_counts = {50, 500};
 
 // Index tuner
-brain::IndexTuner &index_tuner = brain::IndexTuner::GetInstance();
+tuning::IndexTuner &index_tuner = tuning::IndexTuner::GetInstance();
 
 // Layout tuner
-brain::LayoutTuner &layout_tuner = brain::LayoutTuner::GetInstance();
+tuning::LayoutTuner &layout_tuner = tuning::LayoutTuner::GetInstance();
 
 // Predicate generator
 std::vector<std::vector<oid_t>> predicate_distribution;
@@ -237,8 +237,7 @@ static void CreateIndexScanPredicate(std::vector<oid_t> key_attrs,
   // Go over all key_attrs
   for (auto key_attr : key_attrs) {
     key_column_ids.push_back(key_attr);
-    expr_types.push_back(
-        ExpressionType::COMPARE_GREATERTHANOREQUALTO);
+    expr_types.push_back(ExpressionType::COMPARE_GREATERTHANOREQUALTO);
     values.push_back(type::ValueFactory::GetIntegerValue(tuple_start_offset));
 
     key_column_ids.push_back(key_attr);
@@ -292,7 +291,7 @@ static std::shared_ptr<planner::HybridScanPlan> CreateHybridScanPlan(
 
   if (index != nullptr) {
     index_scan_desc = planner::IndexScanPlan::IndexScanDesc(
-        index, key_column_ids, expr_types, values, runtime_keys);
+        index->GetOid(), key_column_ids, expr_types, values, runtime_keys);
 
     hybrid_scan_type = HybridScanType::HYBRID;
   }
@@ -381,7 +380,7 @@ static std::vector<double> GetColumnsAccessed(
  * @param selectivity The selectivity of the operation.
  */
 static void ExecuteTest(std::vector<executor::AbstractExecutor *> &executors,
-                        brain::SampleType sample_type,
+                        tuning::SampleType sample_type,
                         std::vector<std::vector<double>> index_columns_accessed,
                         std::vector<std::vector<oid_t>> tuple_columns_accessed,
                         UNUSED_ATTRIBUTE double selectivity) {
@@ -448,7 +447,7 @@ static void ExecuteTest(std::vector<executor::AbstractExecutor *> &executors,
 
   // Record index sample
   for (auto &index_columns : index_columns_accessed) {
-    brain::Sample index_access_sample(
+    tuning::Sample index_access_sample(
         index_columns, duration / index_columns_accessed.size(), sample_type);
     // ???, selectivity);
     sdbench_table->RecordIndexSample(index_access_sample);
@@ -457,8 +456,9 @@ static void ExecuteTest(std::vector<executor::AbstractExecutor *> &executors,
   // Record layout sample
   for (auto &tuple_columns : tuple_columns_accessed) {
     // Record layout sample
-    brain::Sample tuple_access_bitmap(GetColumnsAccessed(tuple_columns),
-                                      duration / tuple_columns_accessed.size());
+    tuning::Sample tuple_access_bitmap(
+        GetColumnsAccessed(tuple_columns),
+        duration / tuple_columns_accessed.size());
     sdbench_table->RecordLayoutSample(tuple_access_bitmap);
   }
 }
@@ -561,8 +561,9 @@ static void CopyColumn(oid_t col_itr) {
     // Begin copy
     oid_t orig_tile_offset, orig_tile_column_offset;
     auto orig_tile_group = sdbench_table->GetTileGroup(tile_group_itr);
-    orig_tile_group->LocateTileAndColumn(col_itr, orig_tile_offset,
-                                         orig_tile_column_offset);
+    auto orig_layout = orig_tile_group->GetLayout();
+    orig_layout.LocateTileAndColumn(col_itr, orig_tile_offset,
+                                    orig_tile_column_offset);
     auto orig_tile = orig_tile_group->GetTile(orig_tile_offset);
     oid_t tuple_count = state.tuples_per_tilegroup;
     for (oid_t tuple_itr = 0; tuple_itr < tuple_count; tuple_itr++) {
@@ -745,7 +746,8 @@ static void JoinQueryHelper(
   std::shared_ptr<const catalog::Schema> schema(nullptr);
 
   planner::NestedLoopJoinPlan nested_loop_join_node(
-      join_type, std::move(join_predicate), std::move(project_info), schema);
+      join_type, std::move(join_predicate), std::move(project_info), schema,
+      {left_table_join_column}, {right_table_join_column});
 
   // Run the nested loop join executor
   executor::NestedLoopJoinExecutor nested_loop_join_executor(
@@ -765,9 +767,9 @@ static void JoinQueryHelper(
   std::unordered_map<oid_t, oid_t> old_to_new_cols;
   oid_t join_column_count = column_count * 2;
   for (oid_t col_itr = 0; col_itr < join_column_count; col_itr++) {
-    auto column = catalog::Column(type::TypeId::INTEGER,
-                                  type::Type::GetTypeSize(type::TypeId::INTEGER),
-                                  "" + std::to_string(col_itr), is_inlined);
+    auto column = catalog::Column(
+        type::TypeId::INTEGER, type::Type::GetTypeSize(type::TypeId::INTEGER),
+        "" + std::to_string(col_itr), is_inlined);
     output_columns.push_back(column);
 
     old_to_new_cols[col_itr] = col_itr;
@@ -807,7 +809,7 @@ static void JoinQueryHelper(
   auto selectivity = state.selectivity;
 
   ExecuteTest(
-      executors, brain::SampleType::ACCESS,
+      executors, tuning::SampleType::ACCESS,
       {left_table_index_columns_accessed, right_table_index_columns_accessed},
       {left_table_tuple_columns_accessed, right_table_tuple_columns_accessed},
       selectivity);
@@ -926,9 +928,9 @@ static void AggregateQueryHelper(const std::vector<oid_t> &tuple_key_attrs,
   std::unordered_map<oid_t, oid_t> old_to_new_cols;
   col_itr = 0;
   for (auto column_id : column_ids) {
-    auto column = catalog::Column(type::TypeId::INTEGER,
-                                  type::Type::GetTypeSize(type::TypeId::INTEGER),
-                                  std::to_string(column_id), is_inlined);
+    auto column = catalog::Column(
+        type::TypeId::INTEGER, type::Type::GetTypeSize(type::TypeId::INTEGER),
+        std::to_string(column_id), is_inlined);
     output_columns.push_back(column);
 
     old_to_new_cols[col_itr] = col_itr;
@@ -965,7 +967,7 @@ static void AggregateQueryHelper(const std::vector<oid_t> &tuple_key_attrs,
     tuple_columns_accessed.push_back(column_id);
   }
 
-  ExecuteTest(executors, brain::SampleType::ACCESS, {index_columns_accessed},
+  ExecuteTest(executors, tuning::SampleType::ACCESS, {index_columns_accessed},
               {tuple_columns_accessed}, selectivity);
 
   auto result = txn_manager.CommitTransaction(txn);
@@ -1076,7 +1078,7 @@ static void UpdateHelper(const std::vector<oid_t> &tuple_key_attrs,
     tuple_columns_accessed.push_back(update_attr);
   }
 
-  ExecuteTest(executors, brain::SampleType::ACCESS, {index_columns_accessed},
+  ExecuteTest(executors, tuning::SampleType::ACCESS, {index_columns_accessed},
               {tuple_columns_accessed}, selectivity);
 
   auto result = txn_manager.CommitTransaction(txn);
@@ -1142,7 +1144,7 @@ static void InsertHelper() {
   std::vector<double> index_columns_accessed;
   double selectivity = 0;
 
-  ExecuteTest(executors, brain::SampleType::UPDATE, {{}}, {}, selectivity);
+  ExecuteTest(executors, tuning::SampleType::UPDATE, {{}}, {}, selectivity);
 
   auto result = txn_manager.CommitTransaction(txn);
 
@@ -1472,8 +1474,8 @@ static void SDBenchHelper() {
                                                  predicate.end());
       // double selectivity = state.selectivity;
       double duration = rand() % 100;
-      brain::Sample index_access_sample(index_columns_accessed, duration,
-                                        brain::SampleType::ACCESS);
+      tuning::Sample index_access_sample(index_columns_accessed, duration,
+                                         tuning::SampleType::ACCESS);
       // ??? , selectivity);
       for (oid_t i = 0; i < state.analyze_sample_count_threshold; i++) {
         sdbench_table->RecordIndexSample(index_access_sample);

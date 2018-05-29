@@ -17,7 +17,7 @@
 #include "catalog/catalog.h"
 #include "codegen/buffering_consumer.h"
 #include "codegen/compilation_context.h"
-#include "codegen/query_result_consumer.h"
+#include "codegen/execution_consumer.h"
 #include "codegen/value.h"
 #include "common/container_tuple.h"
 #include "expression/constant_value_expression.h"
@@ -33,6 +33,13 @@
 namespace peloton {
 namespace test {
 
+using ExpressionPtr = std::unique_ptr<expression::AbstractExpression>;
+using ConstExpressionPtr =
+    std::unique_ptr<const expression::AbstractExpression>;
+
+using PlanPtr = std::unique_ptr<planner::AbstractPlan>;
+using ConstPlanPtr = std::unique_ptr<const planner::AbstractPlan>;
+
 //===----------------------------------------------------------------------===//
 // Common base class for all codegen tests. This class four test tables that all
 // the codegen components use. Their ID's are available through the oid_t
@@ -40,12 +47,13 @@ namespace test {
 //===----------------------------------------------------------------------===//
 class PelotonCodeGenTest : public PelotonTest {
  public:
-  std::string test_db_name = "PELOTON_CODEGEN";
+  std::string test_db_name = "peloton_codegen";
   std::vector<std::string> test_table_names = {"table1", "table2", "table3",
                                                "table4", "table5"};
   std::vector<oid_t> test_table_oids;
 
-  PelotonCodeGenTest(oid_t tuples_per_tilegroup = DEFAULT_TUPLES_PER_TILEGROUP);
+  PelotonCodeGenTest(oid_t tuples_per_tilegroup = DEFAULT_TUPLES_PER_TILEGROUP,
+                     peloton::LayoutType layout_type = LayoutType::ROW);
 
   virtual ~PelotonCodeGenTest();
 
@@ -57,71 +65,70 @@ class PelotonCodeGenTest : public PelotonTest {
     return *GetDatabase().GetTableWithOid(static_cast<uint32_t>(table_id));
   }
 
+  // Get the layout table
+  storage::DataTable *GetLayoutTable() const { return layout_table; }
+
   // Create the schema (common among all tables)
+  catalog::Column GetTestColumn(uint32_t col_id) const;
+
   std::unique_ptr<catalog::Schema> CreateTestSchema(
       bool add_primary = false) const;
 
   // Create the test tables
-  void CreateTestTables(
-      concurrency::TransactionContext *txn,
-      oid_t tuples_per_tilegroup = DEFAULT_TUPLES_PER_TILEGROUP);
+  void CreateTestTables(concurrency::TransactionContext *txn,
+                        oid_t tuples_per_tilegroup,
+                        peloton::LayoutType layout_type);
 
   // Load the given table with the given number of rows
   void LoadTestTable(oid_t table_id, uint32_t num_rows,
                      bool insert_nulls = false);
 
-  static void ExecuteSync(
-      codegen::Query &query,
-      std::unique_ptr<executor::ExecutorContext> executor_context,
-      codegen::QueryResultConsumer &consumer);
+  // Load tables with the specified layout
+  void CreateAndLoadTableWithLayout(peloton::LayoutType layout_type,
+                                    oid_t tuples_per_tilegroup,
+                                    oid_t tile_group_count, oid_t column_count,
+                                    bool is_inlined);
 
   // Compile and execute the given plan
   codegen::QueryCompiler::CompileStats CompileAndExecute(
-      planner::AbstractPlan &plan, codegen::QueryResultConsumer &consumer);
+      planner::AbstractPlan &plan, codegen::ExecutionConsumer &consumer);
 
   codegen::QueryCompiler::CompileStats CompileAndExecuteCache(
       std::shared_ptr<planner::AbstractPlan> plan,
-      codegen::QueryResultConsumer &consumer, bool &cached,
+      codegen::ExecutionConsumer &consumer, bool &cached,
       std::vector<type::Value> params = {});
 
   //===--------------------------------------------------------------------===//
   // Helpers
   //===--------------------------------------------------------------------===//
-  std::unique_ptr<expression::AbstractExpression> ConstIntExpr(int64_t val);
+  ExpressionPtr ConstIntExpr(int64_t val);
 
-  std::unique_ptr<expression::AbstractExpression> ConstDecimalExpr(double val);
+  ExpressionPtr ConstDecimalExpr(double val);
 
-  std::unique_ptr<expression::AbstractExpression> ColRefExpr(type::TypeId type,
-                                                             uint32_t col_id);
+  ExpressionPtr ColRefExpr(type::TypeId type, uint32_t col_id);
+  ExpressionPtr ColRefExpr(type::TypeId type, bool left, uint32_t col_id);
 
-  std::unique_ptr<expression::AbstractExpression> CmpExpr(
-      ExpressionType cmp_type,
-      std::unique_ptr<expression::AbstractExpression> &&left,
-      std::unique_ptr<expression::AbstractExpression> &&right);
+  ExpressionPtr CmpExpr(ExpressionType cmp_type, ExpressionPtr &&left,
+                        ExpressionPtr &&right);
 
-  std::unique_ptr<expression::AbstractExpression> CmpLtExpr(
-      std::unique_ptr<expression::AbstractExpression> &&left,
-      std::unique_ptr<expression::AbstractExpression> &&right);
+  ExpressionPtr CmpLtExpr(ExpressionPtr &&left, ExpressionPtr &&right);
+  ExpressionPtr CmpLteExpr(ExpressionPtr &&left, ExpressionPtr &&right);
+  ExpressionPtr CmpGtExpr(ExpressionPtr &&left, ExpressionPtr &&right);
+  ExpressionPtr CmpGteExpr(ExpressionPtr &&left, ExpressionPtr &&right);
+  ExpressionPtr CmpEqExpr(ExpressionPtr &&left, ExpressionPtr &&right);
 
-  std::unique_ptr<expression::AbstractExpression> CmpGtExpr(
-      std::unique_ptr<expression::AbstractExpression> &&left,
-      std::unique_ptr<expression::AbstractExpression> &&right);
-  std::unique_ptr<expression::AbstractExpression> CmpGteExpr(
-      std::unique_ptr<expression::AbstractExpression> &&left,
-      std::unique_ptr<expression::AbstractExpression> &&right);
-
-  std::unique_ptr<expression::AbstractExpression> CmpEqExpr(
-      std::unique_ptr<expression::AbstractExpression> &&left,
-      std::unique_ptr<expression::AbstractExpression> &&right);
+  ExpressionPtr OpExpr(ExpressionType op_type, type::TypeId type,
+                       ExpressionPtr &&left, ExpressionPtr &&right);
 
  private:
   storage::Database *test_db;
+  storage::DataTable *layout_table;
 };
 
 //===----------------------------------------------------------------------===//
 // A query consumer that prints the tuples to standard out
 //===----------------------------------------------------------------------===//
-class Printer : public codegen::QueryResultConsumer {
+class Printer : public codegen::ExecutionConsumer {
  public:
   Printer(std::vector<oid_t> cols, planner::BindingContext &context) {
     for (oid_t col_id : cols) {
@@ -129,11 +136,13 @@ class Printer : public codegen::QueryResultConsumer {
     }
   }
 
+  bool SupportsParallelExec() const override { return false; }
+
   // None of these are used, except ConsumeResult()
-  void Prepare(codegen::CompilationContext &) override {}
-  void InitializeState(codegen::CompilationContext &) override {}
-  void TearDownState(codegen::CompilationContext &) override {}
-  // Use
+  void InitializeQueryState(codegen::CompilationContext &) override {}
+  void TearDownQueryState(codegen::CompilationContext &) override {}
+
+  void Prepare(codegen::CompilationContext &ctx) override;
   void ConsumeResult(codegen::ConsumerContext &ctx,
                      codegen::RowBatch::Row &) const override;
 

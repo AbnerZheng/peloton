@@ -12,7 +12,7 @@
 
 #include "executor/abstract_scan_executor.h"
 
-#include "type/types.h"
+#include "common/internal_types.h"
 #include "executor/logical_tile.h"
 #include "executor/logical_tile_factory.h"
 #include "expression/abstract_expression.h"
@@ -38,8 +38,8 @@ AbstractScanExecutor::AbstractScanExecutor(const planner::AbstractPlan *node,
  * @return true on success, false otherwise.
  */
 bool AbstractScanExecutor::DInit() {
-  PL_ASSERT(children_.size() == 0 || children_.size() == 1);
-  PL_ASSERT(executor_context_);
+  PELOTON_ASSERT(children_.size() == 0 || children_.size() == 1);
+  PELOTON_ASSERT(executor_context_);
 
   // Grab data from plan node.
   const planner::AbstractScan &node = GetPlanNode<planner::AbstractScan>();

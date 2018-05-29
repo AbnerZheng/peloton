@@ -17,7 +17,7 @@
 
 #include "catalog/schema.h"
 #include "common/abstract_tuple.h"
-#include "type/types.h"
+#include "common/internal_types.h"
 #include "type/value.h"
 
 namespace peloton {
@@ -43,7 +43,7 @@ class MaskedTuple : public AbstractTuple {
   }
 
   inline void SetMask(const std::vector<oid_t> &mask) {
-    // PL_ASSERT(mask_ == nullptr);
+    // PELOTON_ASSERT(mask_ == nullptr);
     mask_ = mask;
   }
 

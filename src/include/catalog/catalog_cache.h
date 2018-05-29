@@ -15,9 +15,14 @@
 #include <mutex>
 #include <unordered_map>
 
-#include "type/types.h"
+#include "common/internal_types.h"
 
 namespace peloton {
+
+namespace planner {
+class PlanUtil;
+}  // namespace planner
+
 namespace catalog {
 
 class DatabaseCatalogObject;
@@ -32,6 +37,7 @@ class CatalogCache {
   friend class DatabaseCatalogObject;
   friend class TableCatalogObject;
   friend class IndexCatalogObject;
+  friend class planner::PlanUtil;
 
  public:
   CatalogCache() {}
@@ -46,7 +52,7 @@ class CatalogCache {
   std::shared_ptr<TableCatalogObject> GetCachedTableObject(oid_t table_oid);
   std::shared_ptr<IndexCatalogObject> GetCachedIndexObject(oid_t index_oid);
   std::shared_ptr<IndexCatalogObject> GetCachedIndexObject(
-      const std::string &index_name);
+      const std::string &index_name, const std::string &schema_name);
 
   // database catalog cache interface
   bool InsertDatabaseObject(

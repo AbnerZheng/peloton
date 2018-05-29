@@ -6,7 +6,7 @@
 //
 // Identification: src/index/index_util.cpp
 //
-// Copyright (c) 2015-16, Carnegie Mellon University Database Group
+// Copyright (c) 2015-2018, Carnegie Mellon University Database Group
 //
 //===----------------------------------------------------------------------===//
 
@@ -101,7 +101,7 @@ bool IndexUtil::FindValueIndex(const IndexMetadata *metadata_p,
                     std::vector<std::pair<oid_t, oid_t>> &value_index_list) {
 
   // Make sure these two are consistent at least on legnth
-  PL_ASSERT(tuple_column_id_list.size() == expr_list.size());
+  PELOTON_ASSERT(tuple_column_id_list.size() == expr_list.size());
 
   // Number of columns in index key
   size_t index_column_count = metadata_p->GetColumnCount();
@@ -129,8 +129,8 @@ bool IndexUtil::FindValueIndex(const IndexMetadata *metadata_p,
       
     // Make sure the mapping exists (i.e. the tuple column is in
     // index columns)
-    PL_ASSERT(index_column_id != INVALID_OID);
-    PL_ASSERT(index_column_id < index_column_count);
+    PELOTON_ASSERT(index_column_id != INVALID_OID);
+    PELOTON_ASSERT(index_column_id < index_column_count);
     
     ExpressionType e_type = expr_list[i];
     
@@ -158,7 +158,7 @@ bool IndexUtil::FindValueIndex(const IndexMetadata *metadata_p,
         // just checking whether these two equals suffices
         if(value_index_list[index_column_id].second == \
            value_index_list[index_column_id].first) {
-          PL_ASSERT(value_index_list[index_column_id].second != INVALID_OID);
+          PELOTON_ASSERT(value_index_list[index_column_id].second != INVALID_OID);
           
           // We have seen an equality relation
           counter++;
@@ -191,12 +191,12 @@ bool IndexUtil::ValuePairComparator(const std::pair<type::Value, int> &i,
                                     const std::pair<type::Value, int> &j) {
 
   // If first elements are equal then compare the second element
-  if (i.first.CompareEquals(j.first) == type::CmpBool::TRUE) {
+  if (i.first.CompareEquals(j.first) == CmpBool::CmpTrue) {
     return i.second < j.second;
   }
   
   // Otherwise compare the first element for "<" or ">"
-  return i.first.CompareLessThan(j.first) == type::CmpBool::TRUE;
+  return i.first.CompareLessThan(j.first) == CmpBool::CmpTrue;
 }
 
 void IndexUtil::ConstructIntervals(oid_t leading_column_id,
@@ -223,7 +223,7 @@ void IndexUtil::ConstructIntervals(oid_t leading_column_id,
       // Currently if it is not >  < <= then it must be ==
       // *** I could not find BETWEEN expression in types.h so did not add it
       // into the list
-      PL_ASSERT(expr_types[i] == ExpressionType::COMPARE_EQUAL);
+      PELOTON_ASSERT(expr_types[i] == ExpressionType::COMPARE_EQUAL);
       
       nums.push_back(std::pair<type::Value, int>(values[i], -1));
       nums.push_back(std::pair<type::Value, int>(values[i], 1));
@@ -235,7 +235,7 @@ void IndexUtil::ConstructIntervals(oid_t leading_column_id,
   
   // This enforces that there must be at least one constraint on the
   // leading column, if the search is eligible for optimization
-  PL_ASSERT(nums.size() > 0);
+  PELOTON_ASSERT(nums.size() > 0);
 
   // Build intervals.
   // get some dummy value
@@ -312,7 +312,7 @@ void IndexUtil::FindMaxMinInColumns(oid_t leading_column_id,
                 values[i].GetInfo().c_str());
       if (non_leading_columns[column_id].first.IsNull() ||
           non_leading_columns[column_id].first
-            .CompareGreaterThan(values[i]) == type::CmpBool::TRUE) {
+            .CompareGreaterThan(values[i]) == CmpBool::CmpTrue) {
         LOG_TRACE("Update min\n");
         non_leading_columns[column_id].first = values[i].Copy();
       }
@@ -325,7 +325,7 @@ void IndexUtil::FindMaxMinInColumns(oid_t leading_column_id,
                 values[i].GetInfo().c_str());
       if (non_leading_columns[column_id].first.IsNull() ||
           non_leading_columns[column_id].second.
-            CompareLessThan(values[i]) == type::CmpBool::TRUE) {
+            CompareLessThan(values[i]) == CmpBool::CmpTrue) {
         LOG_TRACE("Update max\n");
         non_leading_columns[column_id].second = values[i].Copy();
       }
@@ -352,10 +352,16 @@ std::string IndexUtil::Debug(Index *index) {
   std::ostringstream os;
   int i = 0;
   for (auto ptr : location_ptrs) {
-    os << StringUtil::Format("%03d: {%d, %d}\n", i, ptr->block, ptr->offset);
+    if (i > 0) os << std::endl;
+    os << StringUtil::Format("%03d: %s",
+                             i, IndexUtil::GetInfo(ptr).c_str());
     i += 1;
   }
   return (os.str());
+}
+
+const std::string IndexUtil::GetInfo(const ItemPointer *ptr) {
+  return StringUtil::Format("{%d, %d}", ptr->block, ptr->offset);
 }
 
 }  // namespace index

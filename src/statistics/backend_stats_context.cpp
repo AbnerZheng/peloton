@@ -14,10 +14,10 @@
 
 #include <map>
 
-#include "type/types.h"
-#include "common/statement.h"
 #include "catalog/catalog.h"
 #include "catalog/manager.h"
+#include "common/internal_types.h"
+#include "common/statement.h"
 #include "index/index.h"
 #include "statistics/stats_aggregator.h"
 #include "storage/storage_manager.h"
@@ -26,18 +26,18 @@
 namespace peloton {
 namespace stats {
 
-CuckooMap<std::thread::id, std::shared_ptr<BackendStatsContext>>&
+CuckooMap<std::thread::id, std::shared_ptr<BackendStatsContext>> &
 BackendStatsContext::GetBackendContextMap() {
   static CuckooMap<std::thread::id, std::shared_ptr<BackendStatsContext>>
       stats_context_map;
   return stats_context_map;
 }
 
-BackendStatsContext* BackendStatsContext::GetInstance() {
+BackendStatsContext *BackendStatsContext::GetInstance() {
   // Each thread gets a backend stats context
   std::thread::id this_id = std::this_thread::get_id();
   std::shared_ptr<BackendStatsContext> result(nullptr);
-  auto& stats_context_map = GetBackendContextMap();
+  auto &stats_context_map = GetBackendContextMap();
   if (stats_context_map.Find(this_id, result) == false) {
     result.reset(new BackendStatsContext(LATENCY_MAX_HISTORY_THREAD, true));
     stats_context_map.Insert(this_id, result);
@@ -65,17 +65,19 @@ BackendStatsContext::~BackendStatsContext() {}
 //===--------------------------------------------------------------------===//
 
 // Returns the table metric with the given database ID and table ID
-TableMetric* BackendStatsContext::GetTableMetric(oid_t database_id,
+TableMetric *BackendStatsContext::GetTableMetric(oid_t database_id,
                                                  oid_t table_id) {
-  if (table_metrics_.find(table_id) == table_metrics_.end()) {
-    table_metrics_[table_id] = std::unique_ptr<TableMetric>(
+  // combine database_id and table_id to form unique key
+  uint64_t key = ((uint64_t)database_id << 32) | table_id;
+  if (table_metrics_.find(key) == table_metrics_.end()) {
+    table_metrics_[key] = std::unique_ptr<TableMetric>(
         new TableMetric{MetricType::TABLE, database_id, table_id});
   }
-  return table_metrics_[table_id].get();
+  return table_metrics_[key].get();
 }
 
 // Returns the database metric with the given database ID
-DatabaseMetric* BackendStatsContext::GetDatabaseMetric(oid_t database_id) {
+DatabaseMetric *BackendStatsContext::GetDatabaseMetric(oid_t database_id) {
   if (database_metrics_.find(database_id) == database_metrics_.end()) {
     database_metrics_[database_id] = std::unique_ptr<DatabaseMetric>(
         new DatabaseMetric{MetricType::DATABASE, database_id});
@@ -85,25 +87,26 @@ DatabaseMetric* BackendStatsContext::GetDatabaseMetric(oid_t database_id) {
 
 // Returns the index metric with the given database ID, table ID, and
 // index ID
-IndexMetric* BackendStatsContext::GetIndexMetric(oid_t database_id,
+IndexMetric *BackendStatsContext::GetIndexMetric(oid_t database_id,
                                                  oid_t table_id,
                                                  oid_t index_id) {
   std::shared_ptr<IndexMetric> index_metric;
+  uint64_t key = ((uint64_t)database_id << 32) | index_id;
   // Index metric doesn't exist yet
-  if (index_metrics_.Contains(index_id) == false) {
+  if (index_metrics_.Contains(key) == false) {
     index_metric.reset(
         new IndexMetric{MetricType::INDEX, database_id, table_id, index_id});
-    index_metrics_.Insert(index_id, index_metric);
+    index_metrics_.Insert(key, index_metric);
     index_id_lock.Lock();
-    index_ids_.insert(index_id);
+    index_ids_.insert(key);
     index_id_lock.Unlock();
   }
   // Get index metric from map
-  index_metrics_.Find(index_id, index_metric);
+  index_metrics_.Find(key, index_metric);
   return index_metric.get();
 }
 
-LatencyMetric& BackendStatsContext::GetTxnLatencyMetric() {
+LatencyMetric &BackendStatsContext::GetTxnLatencyMetric() {
   return txn_latencies_;
 }
 
@@ -114,7 +117,7 @@ void BackendStatsContext::IncrementTableReads(oid_t tile_group_id) {
                           .GetTileGroup(tile_group_id)
                           ->GetDatabaseId();
   auto table_metric = GetTableMetric(database_id, table_id);
-  PL_ASSERT(table_metric != nullptr);
+  PELOTON_ASSERT(table_metric != nullptr);
   table_metric->GetTableAccess().IncrementReads();
   if (ongoing_query_metric_ != nullptr) {
     ongoing_query_metric_->GetQueryAccess().IncrementReads();
@@ -128,7 +131,7 @@ void BackendStatsContext::IncrementTableInserts(oid_t tile_group_id) {
                           .GetTileGroup(tile_group_id)
                           ->GetDatabaseId();
   auto table_metric = GetTableMetric(database_id, table_id);
-  PL_ASSERT(table_metric != nullptr);
+  PELOTON_ASSERT(table_metric != nullptr);
   table_metric->GetTableAccess().IncrementInserts();
   if (ongoing_query_metric_ != nullptr) {
     ongoing_query_metric_->GetQueryAccess().IncrementInserts();
@@ -142,7 +145,7 @@ void BackendStatsContext::IncrementTableUpdates(oid_t tile_group_id) {
                           .GetTileGroup(tile_group_id)
                           ->GetDatabaseId();
   auto table_metric = GetTableMetric(database_id, table_id);
-  PL_ASSERT(table_metric != nullptr);
+  PELOTON_ASSERT(table_metric != nullptr);
   table_metric->GetTableAccess().IncrementUpdates();
   if (ongoing_query_metric_ != nullptr) {
     ongoing_query_metric_->GetQueryAccess().IncrementUpdates();
@@ -156,7 +159,7 @@ void BackendStatsContext::IncrementTableDeletes(oid_t tile_group_id) {
                           .GetTileGroup(tile_group_id)
                           ->GetDatabaseId();
   auto table_metric = GetTableMetric(database_id, table_id);
-  PL_ASSERT(table_metric != nullptr);
+  PELOTON_ASSERT(table_metric != nullptr);
   table_metric->GetTableAccess().IncrementDeletes();
   if (ongoing_query_metric_ != nullptr) {
     ongoing_query_metric_->GetQueryAccess().IncrementDeletes();
@@ -164,55 +167,55 @@ void BackendStatsContext::IncrementTableDeletes(oid_t tile_group_id) {
 }
 
 void BackendStatsContext::IncrementIndexReads(size_t read_count,
-                                              index::IndexMetadata* metadata) {
+                                              index::IndexMetadata *metadata) {
   oid_t index_id = metadata->GetOid();
   oid_t table_id = metadata->GetTableOid();
   oid_t database_id = metadata->GetDatabaseOid();
   auto index_metric = GetIndexMetric(database_id, table_id, index_id);
-  PL_ASSERT(index_metric != nullptr);
+  PELOTON_ASSERT(index_metric != nullptr);
   index_metric->GetIndexAccess().IncrementReads(read_count);
 }
 
 void BackendStatsContext::IncrementIndexInserts(
-    index::IndexMetadata* metadata) {
+    index::IndexMetadata *metadata) {
   oid_t index_id = metadata->GetOid();
   oid_t table_id = metadata->GetTableOid();
   oid_t database_id = metadata->GetDatabaseOid();
   auto index_metric = GetIndexMetric(database_id, table_id, index_id);
-  PL_ASSERT(index_metric != nullptr);
+  PELOTON_ASSERT(index_metric != nullptr);
   index_metric->GetIndexAccess().IncrementInserts();
 }
 
 void BackendStatsContext::IncrementIndexUpdates(
-    index::IndexMetadata* metadata) {
+    index::IndexMetadata *metadata) {
   oid_t index_id = metadata->GetOid();
   oid_t table_id = metadata->GetTableOid();
   oid_t database_id = metadata->GetDatabaseOid();
   auto index_metric = GetIndexMetric(database_id, table_id, index_id);
-  PL_ASSERT(index_metric != nullptr);
+  PELOTON_ASSERT(index_metric != nullptr);
   index_metric->GetIndexAccess().IncrementUpdates();
 }
 
 void BackendStatsContext::IncrementIndexDeletes(
-    size_t delete_count, index::IndexMetadata* metadata) {
+    size_t delete_count, index::IndexMetadata *metadata) {
   oid_t index_id = metadata->GetOid();
   oid_t table_id = metadata->GetTableOid();
   oid_t database_id = metadata->GetDatabaseOid();
   auto index_metric = GetIndexMetric(database_id, table_id, index_id);
-  PL_ASSERT(index_metric != nullptr);
+  PELOTON_ASSERT(index_metric != nullptr);
   index_metric->GetIndexAccess().IncrementDeletes(delete_count);
 }
 
 void BackendStatsContext::IncrementTxnCommitted(oid_t database_id) {
   auto database_metric = GetDatabaseMetric(database_id);
-  PL_ASSERT(database_metric != nullptr);
+  PELOTON_ASSERT(database_metric != nullptr);
   database_metric->IncrementTxnCommitted();
   CompleteQueryMetric();
 }
 
 void BackendStatsContext::IncrementTxnAborted(oid_t database_id) {
   auto database_metric = GetDatabaseMetric(database_id);
-  PL_ASSERT(database_metric != nullptr);
+  PELOTON_ASSERT(database_metric != nullptr);
   database_metric->IncrementTxnAborted();
   CompleteQueryMetric();
 }
@@ -220,27 +223,29 @@ void BackendStatsContext::IncrementTxnAborted(oid_t database_id) {
 void BackendStatsContext::InitQueryMetric(
     const std::shared_ptr<Statement> statement,
     const std::shared_ptr<QueryMetric::QueryParams> params) {
+  CompleteQueryMetric();
   // TODO currently all queries belong to DEFAULT_DB
-  ongoing_query_metric_.reset(new QueryMetric(
-      MetricType::QUERY, statement->GetQueryString(), params, DEFAULT_DB_ID));
+  ongoing_query_metric_.reset(new QueryMetric(MetricType::QUERY,
+                                              statement->GetQueryString(),
+                                              params, CATALOG_DATABASE_OID));
 }
 
 //===--------------------------------------------------------------------===//
 // HELPER FUNCTIONS
 //===--------------------------------------------------------------------===//
 
-void BackendStatsContext::Aggregate(BackendStatsContext& source) {
+void BackendStatsContext::Aggregate(BackendStatsContext &source) {
   // Aggregate all global metrics
   txn_latencies_.Aggregate(source.txn_latencies_);
   txn_latencies_.ComputeLatencies();
 
   // Aggregate all per-database metrics
-  for (auto& database_item : source.database_metrics_) {
+  for (auto &database_item : source.database_metrics_) {
     GetDatabaseMetric(database_item.first)->Aggregate(*database_item.second);
   }
 
   // Aggregate all per-table metrics
-  for (auto& table_item : source.table_metrics_) {
+  for (auto &table_item : source.table_metrics_) {
     GetTableMetric(table_item.second->GetDatabaseId(),
                    table_item.second->GetTableId())
         ->Aggregate(*table_item.second);
@@ -268,10 +273,10 @@ void BackendStatsContext::Aggregate(BackendStatsContext& source) {
 void BackendStatsContext::Reset() {
   txn_latencies_.Reset();
 
-  for (auto& database_item : database_metrics_) {
+  for (auto &database_item : database_metrics_) {
     database_item.second->Reset();
   }
-  for (auto& table_item : table_metrics_) {
+  for (auto &table_item : table_metrics_) {
     table_item.second->Reset();
   }
   for (auto id : index_ids_) {
@@ -299,8 +304,9 @@ void BackendStatsContext::Reset() {
       auto table = database->GetTable(j);
       oid_t table_id = table->GetOid();
 
-      if (table_metrics_.find(table_id) == table_metrics_.end()) {
-        table_metrics_[table_id] = std::unique_ptr<TableMetric>(
+      uint64_t key = ((uint64_t)database_id << 32) | table_id;
+      if (table_metrics_.find(key) == table_metrics_.end()) {
+        table_metrics_[key] = std::unique_ptr<TableMetric>(
             new TableMetric{MetricType::TABLE, database_id, table_id});
       }
 
@@ -310,11 +316,13 @@ void BackendStatsContext::Reset() {
         auto index = table->GetIndex(k);
         if (index == nullptr) continue;
         oid_t index_id = index->GetOid();
-        if (index_metrics_.Contains(index_id) == false) {
-          std::shared_ptr<IndexMetric> index_metric(
-              new IndexMetric{MetricType::INDEX, database_id, table_id, index_id});
-          index_metrics_.Insert(index_id, index_metric);
-          index_ids_.insert(index_id);
+        // combine database_id and index_id to form unique key
+        uint64_t index_key = ((uint64_t)database_id << 32) | index_id;
+        if (index_metrics_.Contains(index_key) == false) {
+          std::shared_ptr<IndexMetric> index_metric(new IndexMetric{
+              MetricType::INDEX, database_id, table_id, index_id});
+          index_metrics_.Insert(index_key, index_metric);
+          index_ids_.insert(index_key);
         }
       }
     }
@@ -326,11 +334,11 @@ std::string BackendStatsContext::ToString() const {
 
   ss << txn_latencies_.GetInfo() << std::endl;
 
-  for (auto& database_item : database_metrics_) {
+  for (auto &database_item : database_metrics_) {
     oid_t database_id = database_item.second->GetDatabaseId();
     ss << database_item.second->GetInfo();
 
-    for (auto& table_item : table_metrics_) {
+    for (auto &table_item : table_metrics_) {
       if (table_item.second->GetDatabaseId() == database_id) {
         ss << table_item.second->GetInfo();
 

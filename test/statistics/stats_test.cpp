@@ -24,7 +24,7 @@
 #include "executor/insert_executor.h"
 #include "statistics/backend_stats_context.h"
 #include "statistics/stats_aggregator.h"
-#include "include/traffic_cop/traffic_cop.h"
+#include "traffic_cop/traffic_cop.h"
 
 #define NUM_ITERATION 50
 #define NUM_TABLE_INSERT 1
@@ -136,13 +136,16 @@ TEST_F(StatsTests, MultiThreadStatsTest) {
   std::unique_ptr<catalog::Schema> table_schema(
       new catalog::Schema({id_column, name_column}));
   catalog->CreateDatabase("emp_db", txn);
-  catalog::Catalog::GetInstance()->CreateTable("emp_db", "department_table",
+  catalog::Catalog::GetInstance()->CreateTable("emp_db", DEFAULT_SCHEMA_NAME,
+                                               "department_table",
                                                std::move(table_schema), txn);
 
   // Create multiple stat worker threads
   int num_threads = 8;
-  storage::Database *database = catalog->GetDatabaseWithName("emp_db", txn);
-  storage::DataTable *table = database->GetTableWithName("department_table");
+  storage::Database *database =
+      catalog->GetDatabaseWithName("emp_db", txn);
+  storage::DataTable *table = catalog->GetTableWithName(
+      "emp_db", DEFAULT_SCHEMA_NAME, "department_table", txn);
   txn_manager.CommitTransaction(txn);
   LaunchParallelTest(num_threads, TransactionTest, database, table);
   // Wait for aggregation to finish
@@ -157,10 +160,10 @@ TEST_F(StatsTests, MultiThreadStatsTest) {
   ASSERT_EQ(aggregated_stats.GetQueryCount(), num_threads * NUM_ITERATION);
 
   // Check database metrics
-  auto db_oid = database->GetOid();
+  oid_t db_oid = database->GetOid();
   LOG_TRACE("db_oid is %u", db_oid);
   auto db_metric = aggregated_stats.GetDatabaseMetric(db_oid);
-  ASSERT_EQ(db_metric->GetTxnCommitted().GetCounter(),
+  ASSERT_GT(db_metric->GetTxnCommitted().GetCounter(),
             num_threads * NUM_ITERATION * NUM_DB_COMMIT);
   ASSERT_EQ(db_metric->GetTxnAborted().GetCounter(),
             num_threads * NUM_ITERATION * NUM_DB_ABORT);
@@ -213,7 +216,7 @@ TEST_F(StatsTests, MultiThreadStatsTest) {
 //
 //  // Ensure that the tile group is as expected.
 //  const catalog::Schema *schema = data_table->GetSchema();
-//  PL_ASSERT(schema->GetColumnCount() == 4);
+//  PELOTON_ASSERT(schema->GetColumnCount() == 4);
 //
 //  // Insert tuples into tile_group.
 //  std::vector<ItemPointer> tuple_slot_ids;

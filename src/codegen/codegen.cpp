@@ -6,7 +6,7 @@
 //
 // Identification: src/codegen/codegen.cpp
 //
-// Copyright (c) 2015-2017, Carnegie Mellon University Database Group
+// Copyright (c) 2015-2018, Carnegie Mellon University Database Group
 //
 //===----------------------------------------------------------------------===//
 
@@ -32,7 +32,11 @@ llvm::Type *CodeGen::ArrayType(llvm::Type *type, uint32_t num_elements) const {
 
 /// Constant wrappers for bool, int8, int16, int32, int64, strings and NULL
 llvm::Constant *CodeGen::ConstBool(bool val) const {
-  return llvm::ConstantInt::get(BoolType(), val, true);
+  if (val) {
+    return llvm::ConstantInt::getTrue(GetContext());
+  } else {
+    return llvm::ConstantInt::getFalse(GetContext());
+  }
 }
 
 llvm::Constant *CodeGen::Const8(int8_t val) const {
@@ -76,6 +80,43 @@ llvm::Value *CodeGen::ConstStringPtr(const std::string &s) const {
   return ir_builder.CreateConstInBoundsGEP2_32(nullptr, ConstString(s), 0, 0);
 }
 
+llvm::Value *CodeGen::AllocateVariable(llvm::Type *type,
+                                       const std::string &name) {
+  // To allocate a variable, a function must be under construction
+  PELOTON_ASSERT(code_context_.GetCurrentFunction() != nullptr);
+
+  // All variable allocations go into the current function's "entry" block. By
+  // convention, we insert the allocation instruction before the first
+  // instruction in the "entry" block. If the "entry" block is empty, it doesn't
+  // matter where we insert it.
+
+  auto *entry_block = code_context_.GetCurrentFunction()->GetEntryBlock();
+  if (entry_block->empty()) {
+    return new llvm::AllocaInst(type, name, entry_block);
+  } else {
+    return new llvm::AllocaInst(type, name, &entry_block->front());
+  }
+}
+
+llvm::Value *CodeGen::AllocateBuffer(llvm::Type *element_type,
+                                     uint32_t num_elems,
+                                     const std::string &name) {
+  // Allocate the array
+  auto *arr_type = ArrayType(element_type, num_elems);
+  auto *alloc = AllocateVariable(arr_type, "");
+
+  // The 'alloca' instruction returns a pointer to the allocated type. Since we
+  // are allocating an array of 'element_type' (e.g., i32[4]), we get back a
+  // double pointer (e.g., a i32**). Therefore, we introduce a GEP into the
+  // buffer to strip off the first pointer reference.
+
+  auto *arr = llvm::GetElementPtrInst::CreateInBounds(
+      arr_type, alloc, {Const32(0), Const32(0)}, name);
+  arr->insertAfter(llvm::cast<llvm::AllocaInst>(alloc));
+
+  return arr;
+}
+
 llvm::Value *CodeGen::CallFunc(llvm::Value *fn,
                                std::initializer_list<llvm::Value *> args) {
   return GetBuilder().CreateCall(fn, args);
@@ -106,9 +147,15 @@ llvm::Value *CodeGen::CallPrintf(const std::string &format,
   return CallFunc(printf_fn, printf_args);
 }
 
+llvm::Value *CodeGen::Sqrt(llvm::Value *val) {
+  llvm::Function *sqrt_func = llvm::Intrinsic::getDeclaration(
+      &GetModule(), llvm::Intrinsic::sqrt, val->getType());
+  return CallFunc(sqrt_func, {val});
+}
+
 llvm::Value *CodeGen::CallAddWithOverflow(llvm::Value *left, llvm::Value *right,
                                           llvm::Value *&overflow_bit) {
-  PL_ASSERT(left->getType() == right->getType());
+  PELOTON_ASSERT(left->getType() == right->getType());
 
   // Get the intrinsic that does the addition with overflow checking
   llvm::Function *add_func = llvm::Intrinsic::getDeclaration(
@@ -126,7 +173,7 @@ llvm::Value *CodeGen::CallAddWithOverflow(llvm::Value *left, llvm::Value *right,
 
 llvm::Value *CodeGen::CallSubWithOverflow(llvm::Value *left, llvm::Value *right,
                                           llvm::Value *&overflow_bit) {
-  PL_ASSERT(left->getType() == right->getType());
+  PELOTON_ASSERT(left->getType() == right->getType());
 
   // Get the intrinsic that does the addition with overflow checking
   llvm::Function *sub_func = llvm::Intrinsic::getDeclaration(
@@ -144,7 +191,7 @@ llvm::Value *CodeGen::CallSubWithOverflow(llvm::Value *left, llvm::Value *right,
 
 llvm::Value *CodeGen::CallMulWithOverflow(llvm::Value *left, llvm::Value *right,
                                           llvm::Value *&overflow_bit) {
-  PL_ASSERT(left->getType() == right->getType());
+  PELOTON_ASSERT(left->getType() == right->getType());
   llvm::Function *mul_func = llvm::Intrinsic::getDeclaration(
       &GetModule(), llvm::Intrinsic::smul_with_overflow, left->getType());
 
@@ -159,7 +206,7 @@ llvm::Value *CodeGen::CallMulWithOverflow(llvm::Value *left, llvm::Value *right,
 }
 
 void CodeGen::ThrowIfOverflow(llvm::Value *overflow) const {
-  PL_ASSERT(overflow->getType() == BoolType());
+  PELOTON_ASSERT(overflow->getType() == BoolType());
 
   // Get the overflow basic block for the currently generating function
   auto *func = code_context_.GetCurrentFunction();
@@ -178,7 +225,7 @@ void CodeGen::ThrowIfOverflow(llvm::Value *overflow) const {
 }
 
 void CodeGen::ThrowIfDivideByZero(llvm::Value *divide_by_zero) const {
-  PL_ASSERT(divide_by_zero->getType() == BoolType());
+  PELOTON_ASSERT(divide_by_zero->getType() == BoolType());
 
   // Get the divide-by-zero basic block for the currently generating function
   auto *func = code_context_.GetCurrentFunction();
@@ -224,7 +271,7 @@ llvm::Type *CodeGen::LookupType(const std::string &name) const {
 
 llvm::Value *CodeGen::GetState() const {
   auto *func_builder = code_context_.GetCurrentFunction();
-  PL_ASSERT(func_builder != nullptr);
+  PELOTON_ASSERT(func_builder != nullptr);
 
   // The first argument of the function is always the runtime state
   return func_builder->GetArgumentByPosition(0);
@@ -234,6 +281,38 @@ llvm::Value *CodeGen::GetState() const {
 uint64_t CodeGen::SizeOf(llvm::Type *type) const {
   auto size = code_context_.GetDataLayout().getTypeSizeInBits(type) / 8;
   return size != 0 ? size : 1;
+}
+
+uint64_t CodeGen::ElementOffset(llvm::Type *type, uint32_t element_idx) const {
+  PELOTON_ASSERT(llvm::isa<llvm::StructType>(type));
+  auto &data_layout = code_context_.GetDataLayout();
+
+  auto *struct_layout =
+      data_layout.getStructLayout(llvm::cast<llvm::StructType>(type));
+  return struct_layout->getElementOffset(element_idx);
+}
+
+////////////////////////////////////////////////////////////////////////////////
+///
+/// Proxy Member
+///
+////////////////////////////////////////////////////////////////////////////////
+
+llvm::Value *CppProxyMember::Load(CodeGen &codegen,
+                                  llvm::Value *obj_ptr) const {
+  llvm::SmallVector<llvm::Value *, 2> indexes = {codegen.Const32(0),
+                                                 codegen.Const32(slot_)};
+  // TODO(pmenon): Use CreateStructGEP()
+  llvm::Value *addr = codegen->CreateInBoundsGEP(obj_ptr, indexes);
+  return codegen->CreateLoad(addr);
+}
+
+void CppProxyMember::Store(CodeGen &codegen, llvm::Value *obj_ptr,
+                           llvm::Value *val) const {
+  llvm::SmallVector<llvm::Value *, 2> indexes = {codegen.Const32(0),
+                                                 codegen.Const32(slot_)};
+  llvm::Value *addr = codegen->CreateInBoundsGEP(obj_ptr, indexes);
+  codegen->CreateStore(val, addr);
 }
 
 }  // namespace codegen

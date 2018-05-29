@@ -1,12 +1,12 @@
 //===----------------------------------------------------------------------===//
 //
-//                         PelotonDB
+//                         Peloton
 //
 // bwtree.h
 //
-// Identification: src/index/bwtree.h
+// Identification: src/include/index/bwtree.h
 //
-// Copyright (c) 2015, Carnegie Mellon University Database Group
+// Copyright (c) 2015-2018, Carnegie Mellon University Database Group
 //
 //===----------------------------------------------------------------------===//
 //
@@ -35,6 +35,8 @@
 #include <cstddef>
 #include <vector>
 
+#include <sys/mman.h>
+
 /*
  * BWTREE_PELOTON - Specifies whether Peloton-specific features are
  *                  Compiled or not
@@ -52,7 +54,6 @@
 #ifdef BWTREE_PELOTON
 
 #include "index/index.h"
-#include "util/global.h"
 
 #endif
 
@@ -305,11 +306,11 @@ class BwTreeBase {
     LOG_TRACE("Destroy %lu thread local slots", thread_num);
 
     // There must already be metadata allocated
-    PL_ASSERT(original_p != nullptr);
+    PELOTON_ASSERT(original_p != nullptr);
 
     // Manually call destructor
     for (size_t i = 0; i < thread_num; i++) {
-      PL_ASSERT((gc_metadata_p + i)->data.header.next_p == nullptr);
+      PELOTON_ASSERT((gc_metadata_p + i)->data.header.next_p == nullptr);
 
       (gc_metadata_p + i)->~PaddedGCMetadata();
     }
@@ -333,7 +334,7 @@ class BwTreeBase {
     // for doing alignment
     original_p = static_cast<unsigned char *>(
         malloc(CACHE_LINE_SIZE * (thread_num + 1)));
-    PL_ASSERT(original_p != nullptr);
+    PELOTON_ASSERT(original_p != nullptr);
 
     // Align the address to cache line boundary
     gc_metadata_p = reinterpret_cast<PaddedGCMetadata *>(
@@ -341,10 +342,10 @@ class BwTreeBase {
         CACHE_LINE_MASK);
 
     // Make sure it is aligned
-    PL_ASSERT(((size_t)gc_metadata_p % CACHE_LINE_SIZE) == 0);
+    PELOTON_ASSERT(((size_t)gc_metadata_p % CACHE_LINE_SIZE) == 0);
 
     // Make sure we do not overflow the chunk of memory
-    PL_ASSERT(((size_t)gc_metadata_p + thread_num * CACHE_LINE_SIZE) <=
+    PELOTON_ASSERT(((size_t)gc_metadata_p + thread_num * CACHE_LINE_SIZE) <=
               ((size_t)original_p + (thread_num + 1) * CACHE_LINE_SIZE));
 
     // At last call constructor of the class; we use placement new
@@ -487,7 +488,7 @@ class BwTreeBase {
    */
   inline GCMetaData *GetGCMetaData(int thread_id) {
     // The thread ID must be within the range
-    PL_ASSERT(thread_id >= 0 && thread_id < static_cast<int>(thread_num));
+    PELOTON_ASSERT(thread_id >= 0 && thread_id < static_cast<int>(thread_num));
 
     return &(gc_metadata_p + thread_id)->data;
   }
@@ -505,7 +506,7 @@ class BwTreeBase {
    * one thread participating into the GC process
    */
   uint64_t SummarizeGCEpoch() {
-    PL_ASSERT(thread_num >= 1);
+    PELOTON_ASSERT(thread_num >= 1);
 
     // Use the first metadata's epoch as min and update it on the fly
     uint64_t min_epoch = GetGCMetaData(0)->last_active_epoch;
@@ -1216,7 +1217,7 @@ class BwTree : public BwTreeBase {
      * since the low key node ID for leaf node is not defined
      */
     inline NodeID GetLowKeyNodeID() const {
-      PL_ASSERT(IsOnLeafDeltaChain() == false);
+      PELOTON_ASSERT(IsOnLeafDeltaChain() == false);
 
       return metadata.low_key_p->second;
     }
@@ -1857,13 +1858,13 @@ class BwTree : public BwTreeBase {
           // but since the linked list itself is supposed to be relatively short
           // even under contention, we do not worry about it right now
           meta_p = meta_p->GrowChunk();
-          PL_ASSERT(meta_p != nullptr);
+          PELOTON_ASSERT(meta_p != nullptr);
         } else {
           return p;
         }
       }
 
-      PL_ASSERT(false);
+      PELOTON_ASSERT(false);
       return nullptr;
     }
 
@@ -2048,7 +2049,7 @@ class BwTree : public BwTreeBase {
     inline void PushBack(const ElementType *copy_start_p,
                          const ElementType *copy_end_p) {
       // Make sure the loop will come to an end
-      PL_ASSERT(copy_start_p <= copy_end_p);
+      PELOTON_ASSERT(copy_start_p <= copy_end_p);
 
       while (copy_start_p != copy_end_p) {
         PushBack(*copy_start_p);
@@ -2076,7 +2077,7 @@ class BwTree : public BwTreeBase {
                                    const KeyNodeIDPair &p_high_key) {
       // Currently this is always true - if we want a larger array then
       // just remove this line
-      PL_ASSERT(size == p_item_count);
+      PELOTON_ASSERT(size == p_item_count);
 
       // Allocte memory for
       //   1. AllocationMeta (chunk)
@@ -2088,7 +2089,7 @@ class BwTree : public BwTreeBase {
       char *alloc_base =
           new char[sizeof(ElasticNode) + size * sizeof(ElementType) +
                    AllocationMeta::CHUNK_SIZE()];
-      PL_ASSERT(alloc_base != nullptr);
+      PELOTON_ASSERT(alloc_base != nullptr);
 
       // Initialize the AllocationMeta - tail points to the first byte inside
       // class ElasticNode; limit points to the first byte after class
@@ -2147,13 +2148,13 @@ class BwTree : public BwTreeBase {
      */
     static void *InlineAllocate(const KeyNodeIDPair *low_key_p, size_t size) {
       const ElasticNode *node_p = GetNodeHeader(low_key_p);
-      PL_ASSERT(&node_p->low_key == low_key_p);
+      PELOTON_ASSERT(&node_p->low_key == low_key_p);
 
       // Jump over chunk content
       AllocationMeta *meta_p = GetAllocationHeader(node_p);
 
       void *p = meta_p->Allocate(size);
-      PL_ASSERT(p != nullptr);
+      PELOTON_ASSERT(p != nullptr);
 
       return p;
     }
@@ -2163,14 +2164,14 @@ class BwTree : public BwTreeBase {
      */
     inline ElementType &At(const int index) {
       // The index must be inside the valid range
-      PL_ASSERT(index < GetSize());
+      PELOTON_ASSERT(index < GetSize());
 
       return *(Begin() + index);
     }
 
     inline const ElementType &At(const int index) const {
       // The index must be inside the valid range
-      PL_ASSERT(index < GetSize());
+      PELOTON_ASSERT(index < GetSize());
 
       return *(Begin() + index);
     }
@@ -2210,12 +2211,12 @@ class BwTree : public BwTreeBase {
       int key_num = this->GetSize();
 
       // Inner node size must be > 2 to avoid empty split node
-      PL_ASSERT(key_num >= 2);
+      PELOTON_ASSERT(key_num >= 2);
 
       // Same reason as in leaf node - since we only split inner node
       // without a delta chain on top of it, the sep list size must equal
       // the recorded item count
-      PL_ASSERT(key_num == this->GetItemCount());
+      PELOTON_ASSERT(key_num == this->GetItemCount());
 
       int split_item_index = key_num / 2;
 
@@ -2237,8 +2238,8 @@ class BwTree : public BwTreeBase {
       inner_node_p->PushBack(copy_start_it, this->End());
 
       // Since we copy exactly that many elements
-      PL_ASSERT(inner_node_p->GetSize() == sibling_size);
-      PL_ASSERT(inner_node_p->GetSize() == inner_node_p->GetItemCount());
+      PELOTON_ASSERT(inner_node_p->GetSize() == sibling_size);
+      PELOTON_ASSERT(inner_node_p->GetSize() == inner_node_p->GetItemCount());
 
       return inner_node_p;
     }
@@ -2283,7 +2284,7 @@ class BwTree : public BwTreeBase {
      */
     int FindSplitPoint(const BwTree *t) const {
       int central_index = this->GetSize() / 2;
-      PL_ASSERT(central_index > 1);
+      PELOTON_ASSERT(central_index > 1);
 
       // This will used as upper_bound and lower_bound key
       const KeyValuePair &central_kvp = this->At(central_index);
@@ -2360,7 +2361,7 @@ class BwTree : public BwTreeBase {
       // When we split a leaf node, it is certain that there is no delta
       // chain on top of it. As a result, the number of items must equal
       // the actual size of the data list
-      PL_ASSERT(this->GetSize() == this->GetItemCount());
+      PELOTON_ASSERT(this->GetSize() == this->GetItemCount());
 
       // This is the index of the actual key-value pair in data_list
       // We need to substract this value from the prefix sum in the new
@@ -2401,8 +2402,8 @@ class BwTree : public BwTreeBase {
       // Copy data item into the new node using PushBack()
       leaf_node_p->PushBack(copy_start_it, copy_end_it);
 
-      PL_ASSERT(leaf_node_p->GetSize() == sibling_size);
-      PL_ASSERT(leaf_node_p->GetSize() == leaf_node_p->GetItemCount());
+      PELOTON_ASSERT(leaf_node_p->GetSize() == sibling_size);
+      PELOTON_ASSERT(leaf_node_p->GetSize() == leaf_node_p->GetItemCount());
 
       return leaf_node_p;
     }
@@ -2531,7 +2532,7 @@ class BwTree : public BwTreeBase {
 
       // This will collect all nodes since we have adjusted the currenr thread
       // GC ID
-      PL_ASSERT(GetGCMetaData(i)->node_count == 0);
+      PELOTON_ASSERT(GetGCMetaData(i)->node_count == 0);
     }
 
     return;
@@ -2640,7 +2641,7 @@ class BwTree : public BwTreeBase {
 
     while (1) {
       node_p = next_node_p;
-      PL_ASSERT(node_p != nullptr);
+      PELOTON_ASSERT(node_p != nullptr);
 
       NodeType type = node_p->GetType();
 
@@ -2763,12 +2764,12 @@ class BwTree : public BwTreeBase {
           // has been finished)
           LOG_DEBUG("Unknown node type: %d", (int)type);
 
-          PL_ASSERT(false);
+          PELOTON_ASSERT(false);
           return 0;
       }  // switch
     }    // while 1
 
-    PL_ASSERT(false);
+    PELOTON_ASSERT(false);
     return 0;
   }
 
@@ -2782,12 +2783,12 @@ class BwTree : public BwTreeBase {
     LOG_TRACE("Initializing node layout for root and first page...");
 
     root_id = GetNextNodeID();
-    PL_ASSERT(root_id == 1UL);
+    PELOTON_ASSERT(root_id == 1UL);
 
     // This is important since in the iterator we will use NodeID = 2
     // as the starting point of the traversal
     first_leaf_id = GetNextNodeID();
-    PL_ASSERT(first_leaf_id == FIRST_LEAF_NODE_ID);
+    PELOTON_ASSERT(first_leaf_id == FIRST_LEAF_NODE_ID);
 
 #ifdef BWTREE_PELOTON
 
@@ -2865,6 +2866,21 @@ class BwTree : public BwTreeBase {
    * the mapping table rather than CAS with nullptr
    */
   void InitMappingTable() {
+    mapping_table = (std::atomic<const BaseNode *> *) \
+                    mmap(NULL, 1024 * 1024 * 1024, 
+                         PROT_READ | PROT_WRITE, 
+                         MAP_ANONYMOUS | MAP_PRIVATE,
+                         -1, 0);
+    // If allocation fails, we throw an error because this is uncoverable
+    // The upper level functions should either catch this exception
+    // and then use another index instead, or simply kill the system
+    if(mapping_table == (void *)-1) {
+      LOG_ERROR("Failed to initialize mapping table");
+      throw IndexException("mmap() failed to initialize mapping table for Bw-Tree");
+    }
+
+    LOG_TRACE("Mapping table allocated via mmap()");
+
     LOG_TRACE("Initializing mapping table.... size = %lu", MAPPING_TABLE_SIZE);
     LOG_TRACE("Fast initialization: Do not set to zero");
 
@@ -2903,8 +2919,8 @@ class BwTree : public BwTreeBase {
   inline bool InstallNodeToReplace(NodeID node_id, const BaseNode *node_p,
                                    const BaseNode *prev_p) {
     // Make sure node id is valid and does not exceed maximum
-    PL_ASSERT(node_id != INVALID_NODE_ID);
-    PL_ASSERT(node_id < MAPPING_TABLE_SIZE);
+    PELOTON_ASSERT(node_id != INVALID_NODE_ID);
+    PELOTON_ASSERT(node_id < MAPPING_TABLE_SIZE);
 
 // If idb is activated, then all operation will be blocked before
 // they could call CAS and change the key
@@ -2953,8 +2969,8 @@ class BwTree : public BwTreeBase {
    * call GetNode() once and stick to that physical pointer
    */
   inline const BaseNode *GetNode(const NodeID node_id) {
-    PL_ASSERT(node_id != INVALID_NODE_ID);
-    PL_ASSERT(node_id < MAPPING_TABLE_SIZE);
+    PELOTON_ASSERT(node_id != INVALID_NODE_ID);
+    PELOTON_ASSERT(node_id < MAPPING_TABLE_SIZE);
 
     return mapping_table[node_id].load();
   }
@@ -2987,14 +3003,15 @@ class BwTree : public BwTreeBase {
    * If both are nullptr then we just traverse and do not do anything
    */
   const KeyValuePair *Traverse(Context *context_p, const ValueType *value_p,
-                               std::pair<int, bool> *index_pair_p) {
+                               std::pair<int, bool> *index_pair_p,
+                               bool unique_key=false) {
     // For value collection it always returns nullptr
     const KeyValuePair *found_pair_p = nullptr;
 
   retry_traverse:
-    PL_ASSERT(context_p->abort_flag == false);
+    PELOTON_ASSERT(context_p->abort_flag == false);
 #ifdef BWTREE_DEBUG
-    PL_ASSERT(context_p->current_level == -1);
+    PELOTON_ASSERT(context_p->current_level == -1);
 #endif
 
     // This is the serialization point for reading/writing root node
@@ -3034,7 +3051,7 @@ class BwTree : public BwTreeBase {
         // as a double check
         // This is the only situation that this function returns
         // INVALID_NODE_ID
-        PL_ASSERT(child_node_id == INVALID_NODE_ID);
+        PELOTON_ASSERT(child_node_id == INVALID_NODE_ID);
 
         goto abort_traverse;
       }
@@ -3063,7 +3080,7 @@ class BwTree : public BwTreeBase {
 
     if (value_p == nullptr) {
       // We are using an iterator just to get a leaf page
-      PL_ASSERT(index_pair_p == nullptr);
+      PELOTON_ASSERT(index_pair_p == nullptr);
 
       // If both are nullptr then we just navigate the sibling chain
       // to find the correct node with the correct range
@@ -3073,7 +3090,7 @@ class BwTree : public BwTreeBase {
     } else {
       // If a value is given then use this value to Traverse down leaf
       // page to find whether the value exists or not
-      found_pair_p = NavigateLeafNode(context_p, *value_p, index_pair_p);
+      found_pair_p = NavigateLeafNode(context_p, *value_p, index_pair_p, unique_key);
     }
 
     if (context_p->abort_flag == true) {
@@ -3097,7 +3114,7 @@ class BwTree : public BwTreeBase {
   abort_traverse:
 #ifdef BWTREE_DEBUG
 
-    PL_ASSERT(context_p->current_level >= 0);
+    PELOTON_ASSERT(context_p->current_level >= 0);
 
     context_p->current_level = -1;
 
@@ -3112,7 +3129,7 @@ class BwTree : public BwTreeBase {
 
     goto retry_traverse;
 
-    PL_ASSERT(false);
+    PELOTON_ASSERT(false);
     return nullptr;
   }
 
@@ -3223,7 +3240,7 @@ class BwTree : public BwTreeBase {
                                      const KeyNodeIDPair *start_p,
                                      const KeyNodeIDPair *end_p) {
     // Inner node could not be empty
-    PL_ASSERT(inner_node_p->GetSize() != 0UL);
+    PELOTON_ASSERT(inner_node_p->GetSize() != 0UL);
     (void)inner_node_p;
 
     // Hopefully std::upper_bound would use binary search here
@@ -3237,7 +3254,7 @@ class BwTree : public BwTreeBase {
 //                           std::make_pair(search_key, INVALID_NODE_ID),
 //                           key_node_id_pair_cmp_obj) - 1;
 
-// PL_ASSERT(it == it2);
+// PELOTON_ASSERT(it == it2);
 #endif
 
     // Since upper_bound returns the first element > given key
@@ -3258,7 +3275,7 @@ class BwTree : public BwTreeBase {
    */
   inline NodeID LocateSeparatorByKeyBI(const KeyType &search_key,
                                        const InnerNode *inner_node_p) {
-    PL_ASSERT(inner_node_p->GetSize() != 0UL);
+    PELOTON_ASSERT(inner_node_p->GetSize() != 0UL);
     auto it = std::upper_bound(inner_node_p->Begin() + 1, inner_node_p->End(),
                                std::make_pair(search_key, INVALID_NODE_ID),
                                key_node_id_pair_cmp_obj) -
@@ -3267,7 +3284,7 @@ class BwTree : public BwTreeBase {
     if (KeyCmpEqual(it->first, search_key) == true) {
       // If search key is the low key then we know we should have already
       // gone left on the parent node
-      PL_ASSERT(it != inner_node_p->Begin());
+      PELOTON_ASSERT(it != inner_node_p->Begin());
 
       // Go to the left separator to find the left node with range < search key
       // After decreament it might or might not be the low key
@@ -3327,13 +3344,13 @@ class BwTree : public BwTreeBase {
     const BaseNode *node_p = snapshot_p->node_p;
 
     // Make sure the structure is valid
-    PL_ASSERT(snapshot_p->IsLeaf() == false);
-    PL_ASSERT(snapshot_p->node_p != nullptr);
+    PELOTON_ASSERT(snapshot_p->IsLeaf() == false);
+    PELOTON_ASSERT(snapshot_p->node_p != nullptr);
 
     // For read only workload this is always true since we do not need
     // to remember the node ID for read - read is always stateless until
     // it has reached a leaf node
-    PL_ASSERT(snapshot_p->node_id != INVALID_NODE_ID);
+    PELOTON_ASSERT(snapshot_p->node_id != INVALID_NODE_ID);
 
     LOG_TRACE("Navigating inner node delta chain...");
 
@@ -3470,7 +3487,7 @@ class BwTree : public BwTreeBase {
         default: {
           LOG_TRACE("ERROR: Unknown node type = %d", static_cast<int>(type));
 
-          PL_ASSERT(false);
+          PELOTON_ASSERT(false);
         }
       }  // switch type
 
@@ -3478,7 +3495,7 @@ class BwTree : public BwTreeBase {
     }  // while 1
 
     // Should not reach here
-    PL_ASSERT(false);
+    PELOTON_ASSERT(false);
     return INVALID_NODE_ID;
   }
 
@@ -3504,8 +3521,8 @@ class BwTree : public BwTreeBase {
     NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
     const BaseNode *node_p = snapshot_p->node_p;
 
-    PL_ASSERT(snapshot_p->IsLeaf() == false);
-    PL_ASSERT(snapshot_p->node_p != nullptr);
+    PELOTON_ASSERT(snapshot_p->IsLeaf() == false);
+    PELOTON_ASSERT(snapshot_p->node_p != nullptr);
     LOG_TRACE("Navigating inner node delta chain for BI...");
 
     while (1) {
@@ -3603,13 +3620,13 @@ class BwTree : public BwTreeBase {
           LOG_ERROR("ERROR: Unknown or unsupported node type = %d",
                     static_cast<int>(type));
 
-          PL_ASSERT(false);
+          PELOTON_ASSERT(false);
         }
       }  // switch type
     }    // while 1
 
     // Should not reach here
-    PL_ASSERT(false);
+    PELOTON_ASSERT(false);
     return INVALID_NODE_ID;
   }
 
@@ -3676,8 +3693,8 @@ class BwTree : public BwTreeBase {
     // Since consolidation would not change item count they must be equal
     // Also allocated space should be used exactly as described in the
     // construction function
-    PL_ASSERT(inner_node_p->GetSize() == node_p->GetItemCount());
-    PL_ASSERT(inner_node_p->GetSize() == inner_node_p->GetItemCount());
+    PELOTON_ASSERT(inner_node_p->GetSize() == node_p->GetItemCount());
+    PELOTON_ASSERT(inner_node_p->GetSize() == inner_node_p->GetItemCount());
 
     return inner_node_p;
   }
@@ -3728,7 +3745,7 @@ class BwTree : public BwTreeBase {
           }
 
           // Since we want to access its first element
-          PL_ASSERT(inner_node_p->GetSize() > 0);
+          PELOTON_ASSERT(inner_node_p->GetSize() > 0);
 
           // If the first element in the sep list equals the low key pair's
           // NodeID then we are at the leftmost node of the merge tree
@@ -3856,7 +3873,7 @@ class BwTree : public BwTreeBase {
         case NodeType::InnerRemoveType: {
           LOG_ERROR("ERROR: InnerRemoveNode not allowed");
 
-          PL_ASSERT(false);
+          PELOTON_ASSERT(false);
           return;
         }  // case InnerRemoveType
         case NodeType::InnerInsertType: {
@@ -3865,7 +3882,7 @@ class BwTree : public BwTreeBase {
 
           // delta nodes must be consistent with the most up-to-date
           // node high key
-          PL_ASSERT(
+          PELOTON_ASSERT(
               (high_key_pair.second == INVALID_NODE_ID) ||
               (KeyCmpLess(insert_node_p->item.first, high_key_pair.first)));
 
@@ -3884,7 +3901,7 @@ class BwTree : public BwTreeBase {
           // this must be true
           // i.e. delta nodes must be consistent with the most up-to-date
           // node high key
-          PL_ASSERT(
+          PELOTON_ASSERT(
               (high_key_pair.second == INVALID_NODE_ID) ||
               (KeyCmpLess(delete_node_p->item.first, high_key_pair.first)));
 
@@ -3923,14 +3940,14 @@ class BwTree : public BwTreeBase {
           LOG_ERROR("ERROR: Unknown inner node type = %d",
                     static_cast<int>(type));
 
-          PL_ASSERT(false);
+          PELOTON_ASSERT(false);
           return;
         }
       }  // switch type
     }    // while(1)
 
     // Should not get to here
-    PL_ASSERT(false);
+    PELOTON_ASSERT(false);
     return;
   }
 
@@ -3985,7 +4002,7 @@ class BwTree : public BwTreeBase {
     NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
     const BaseNode *node_p = snapshot_p->node_p;
 
-    PL_ASSERT(snapshot_p->IsLeaf() == true);
+    PELOTON_ASSERT(snapshot_p->IsLeaf() == true);
 
     // We only collect values for this key
     const KeyType &search_key = context_p->search_key;
@@ -4102,7 +4119,7 @@ class BwTree : public BwTreeBase {
         case NodeType::LeafRemoveType: {
           LOG_ERROR("ERROR: Observed LeafRemoveNode in delta chain");
 
-          PL_ASSERT(false);
+          PELOTON_ASSERT(false);
           PELOTON_FALLTHROUGH;
         }  // case LeafRemoveType
         case NodeType::LeafMergeType: {
@@ -4142,13 +4159,13 @@ class BwTree : public BwTreeBase {
           LOG_ERROR("ERROR: Unknown leaf delta node type: %d",
                     static_cast<int>(node_p->GetType()));
 
-          PL_ASSERT(false);
+          PELOTON_ASSERT(false);
         }  // default
       }    // switch
     }      // while
 
     // We cannot reach here
-    PL_ASSERT(false);
+    PELOTON_ASSERT(false);
     return;
   }
 
@@ -4173,7 +4190,8 @@ class BwTree : public BwTreeBase {
    */
   const KeyValuePair *NavigateLeafNode(Context *context_p,
                                        const ValueType &search_value,
-                                       std::pair<int, bool> *index_pair_p) {
+                                       std::pair<int, bool> *index_pair_p,
+                                       bool unique_key=false) {
     // This will go to the right sibling until we have seen
     // a node whose range match the search key
     NavigateSiblingChain(context_p);
@@ -4190,7 +4208,7 @@ class BwTree : public BwTreeBase {
     // Snapshot pointer, node pointer, and metadata reference all need
     // updating once LoadNodeID() returns with success
     NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
-    PL_ASSERT(snapshot_p->IsLeaf() == true);
+    PELOTON_ASSERT(snapshot_p->IsLeaf() == true);
 
     const BaseNode *node_p = snapshot_p->node_p;
 
@@ -4218,7 +4236,7 @@ class BwTree : public BwTreeBase {
             // We do not need to check any delete set here, since if the
             // value has been deleted earlier then this function would
             // already have returned
-            if (ValueCmpEqual(scan_start_it->second, search_value)) {
+            if (unique_key == true || ValueCmpEqual(scan_start_it->second, search_value)) {
               // Since only Delete() will use this piece of information
               // we set exist flag to false to indicate that the value
               // has been invalidated
@@ -4246,7 +4264,7 @@ class BwTree : public BwTreeBase {
               static_cast<const LeafInsertNode *>(node_p);
 
           if (KeyCmpEqual(search_key, insert_node_p->item.first)) {
-            if (ValueCmpEqual(insert_node_p->item.second, search_value)) {
+            if (unique_key == true || ValueCmpEqual(insert_node_p->item.second, search_value)) {
               // Only Delete() will use this
               // We just simply inherit from the first node
               *index_pair_p = insert_node_p->GetIndexPair();
@@ -4265,7 +4283,7 @@ class BwTree : public BwTreeBase {
 
           // If the value was deleted then return false
           if (KeyCmpEqual(search_key, delete_node_p->item.first)) {
-            if (ValueCmpEqual(delete_node_p->item.second, search_value)) {
+            if (unique_key == true || ValueCmpEqual(delete_node_p->item.second, search_value)) {
               // Only Insert() will use this
               // We just simply inherit from the first node
               *index_pair_p = delete_node_p->GetIndexPair();
@@ -4281,7 +4299,7 @@ class BwTree : public BwTreeBase {
         case NodeType::LeafRemoveType: {
           LOG_ERROR("ERROR: Observed LeafRemoveNode in delta chain");
 
-          PL_ASSERT(false);
+          PELOTON_ASSERT(false);
           PELOTON_FALLTHROUGH;
         }  // case LeafRemoveType
         case NodeType::LeafMergeType: {
@@ -4318,13 +4336,13 @@ class BwTree : public BwTreeBase {
           LOG_ERROR("ERROR: Unknown leaf delta node type: %d",
                     static_cast<int>(node_p->GetType()));
 
-          PL_ASSERT(false);
+          PELOTON_ASSERT(false);
         }  // default
       }    // switch
     }      // while
 
     // We cannot reach here
-    PL_ASSERT(false);
+    PELOTON_ASSERT(false);
     return nullptr;
   }
 
@@ -4365,7 +4383,7 @@ class BwTree : public BwTreeBase {
     NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
     const BaseNode *node_p = snapshot_p->node_p;
 
-    PL_ASSERT(snapshot_p->IsLeaf() == true);
+    PELOTON_ASSERT(snapshot_p->IsLeaf() == true);
 
     const KeyType &search_key = context_p->search_key;
 
@@ -4471,7 +4489,7 @@ class BwTree : public BwTreeBase {
         case NodeType::LeafRemoveType: {
           LOG_ERROR("ERROR: Observed LeafRemoveNode in delta chain");
 
-          PL_ASSERT(false);
+          PELOTON_ASSERT(false);
           PELOTON_FALLTHROUGH;
         }  // case LeafRemoveType
         case NodeType::LeafMergeType: {
@@ -4506,13 +4524,13 @@ class BwTree : public BwTreeBase {
           LOG_ERROR("ERROR: Unknown leaf delta node type: %d",
                     static_cast<int>(node_p->GetType()));
 
-          PL_ASSERT(false);
+          PELOTON_ASSERT(false);
         }  // default
       }    // switch
     }      // while
 
     // We cannot reach here
-    PL_ASSERT(false);
+    PELOTON_ASSERT(false);
     return nullptr;
   }
 
@@ -4531,7 +4549,7 @@ class BwTree : public BwTreeBase {
    */
   LeafNode *CollectAllValuesOnLeaf(NodeSnapshot *snapshot_p,
                                    LeafNode *leaf_node_p = nullptr) {
-    PL_ASSERT(snapshot_p->IsLeaf() == true);
+    PELOTON_ASSERT(snapshot_p->IsLeaf() == true);
 
     const BaseNode *node_p = snapshot_p->node_p;
 
@@ -4545,7 +4563,7 @@ class BwTree : public BwTreeBase {
           node_p->GetLowKeyPair(), node_p->GetHighKeyPair()));
     }
 
-    PL_ASSERT(leaf_node_p != nullptr);
+    PELOTON_ASSERT(leaf_node_p != nullptr);
 
     /////////////////////////////////////////////////////////////////
     // Prepare Delta Set
@@ -4588,11 +4606,11 @@ class BwTree : public BwTreeBase {
 
     // This is not used since in this case we do not need to compare
     // for equal relation
-    auto f2 = [this](const LeafDataNode *ldn1, const LeafDataNode *ldn2) {
+    auto f2 = [](const LeafDataNode *ldn1, const LeafDataNode *ldn2) {
       (void)ldn1;
       (void)ldn2;
 
-      PL_ASSERT(false);
+      PELOTON_ASSERT(false);
       return false;
     };
 
@@ -4610,7 +4628,7 @@ class BwTree : public BwTreeBase {
     CollectAllValuesOnLeafRecursive(node_p, sss, delta_set, leaf_node_p);
 
     // Item count would not change during consolidation
-    PL_ASSERT(leaf_node_p->GetSize() == node_p->GetItemCount());
+    PELOTON_ASSERT(leaf_node_p->GetSize() == node_p->GetItemCount());
 
     return leaf_node_p;
   }
@@ -4713,8 +4731,8 @@ class BwTree : public BwTreeBase {
             // we also copy the old item in leaf node
             bool item_overwritten = false;
 
-            PL_ASSERT(copy_start_index <= current_index);
-            PL_ASSERT(current_index <= copy_end_index);
+            PELOTON_ASSERT(copy_start_index <= current_index);
+            PELOTON_ASSERT(current_index <= copy_end_index);
 
             // First copy all items before the current index
             new_leaf_node_p->PushBack(leaf_node_p->Begin() + copy_start_index,
@@ -4736,7 +4754,7 @@ class BwTree : public BwTreeBase {
                 // We remove the element from sss here
                 new_leaf_node_p->PushBack(sss.PopFront()->item);
               } else {
-                PL_ASSERT(sss.GetFront()->GetType() ==
+                PELOTON_ASSERT(sss.GetFront()->GetType() ==
                           NodeType::LeafDeleteType);
 
                 // ... and here
@@ -4793,7 +4811,7 @@ class BwTree : public BwTreeBase {
         case NodeType::LeafRemoveType: {
           LOG_ERROR("ERROR: LeafRemoveNode not allowed");
 
-          PL_ASSERT(false);
+          PELOTON_ASSERT(false);
           PELOTON_FALLTHROUGH;
         }  // case LeafRemoveType
         case NodeType::LeafSplitType: {
@@ -4820,7 +4838,7 @@ class BwTree : public BwTreeBase {
         default: {
           LOG_ERROR("ERROR: Unknown node type: %d", static_cast<int>(type));
 
-          PL_ASSERT(false);
+          PELOTON_ASSERT(false);
         }  // default
       }    // switch
     }      // while(1)
@@ -4843,7 +4861,7 @@ class BwTree : public BwTreeBase {
    */
   static inline NodeSnapshot *GetLatestNodeSnapshot(Context *context_p) {
 #ifdef BWTREE_DEBUG
-    PL_ASSERT(context_p->current_level >= 0);
+    PELOTON_ASSERT(context_p->current_level >= 0);
 #endif
 
     return &context_p->current_snapshot;
@@ -4862,7 +4880,7 @@ class BwTree : public BwTreeBase {
   inline NodeSnapshot *GetLatestParentNodeSnapshot(Context *context_p) {
 #ifdef BWTREE_DEBUG
     // Make sure the current node has a parent
-    PL_ASSERT(context_p->current_level >= 1);
+    PELOTON_ASSERT(context_p->current_level >= 1);
 #endif
     // This is the address of the parent node
     return &context_p->parent_snapshot;
@@ -4880,7 +4898,7 @@ class BwTree : public BwTreeBase {
    */
   inline bool IsOnLeftMostChild(Context *context_p) {
 #ifdef BWTREE_DEBUG
-    PL_ASSERT(context_p->current_level >= 1);
+    PELOTON_ASSERT(context_p->current_level >= 1);
 #endif
 
     return GetLatestParentNodeSnapshot(context_p)->node_p->GetLowKeyNodeID() ==
@@ -4911,7 +4929,7 @@ class BwTree : public BwTreeBase {
     LOG_TRACE("Jumping to the left sibling");
 
 #ifdef BWTREE_DEBUG
-    PL_ASSERT(context_p->HasParentNode());
+    PELOTON_ASSERT(context_p->HasParentNode());
 #endif
 
     // Get last record which is the current node's context
@@ -4919,7 +4937,7 @@ class BwTree : public BwTreeBase {
     NodeSnapshot *snapshot_p = GetLatestNodeSnapshot(context_p);
 
     // Check currently we are on a remove node
-    PL_ASSERT(snapshot_p->node_p->IsRemoveNode());
+    PELOTON_ASSERT(snapshot_p->node_p->IsRemoveNode());
 
     // This is not necessarily true. e.g. if the parent node was merged into
     // its left sibling before we take the snapshot of its previou left child
@@ -4945,7 +4963,7 @@ class BwTree : public BwTreeBase {
 
     // Get its parent node
     NodeSnapshot *parent_snapshot_p = GetLatestParentNodeSnapshot(context_p);
-    PL_ASSERT(parent_snapshot_p->IsLeaf() == false);
+    PELOTON_ASSERT(parent_snapshot_p->IsLeaf() == false);
 
     // If the parent has changed then abort
     // This is to avoid missing InnerInsertNode which is fatal in our case
@@ -5064,10 +5082,10 @@ class BwTree : public BwTreeBase {
 
     // Assume we always use this function to traverse on the same
     // level
-    PL_ASSERT(node_p->IsOnLeafDeltaChain() == snapshot_p->IsLeaf());
+    PELOTON_ASSERT(node_p->IsOnLeafDeltaChain() == snapshot_p->IsLeaf());
 
     // Make sure we are not switching to itself
-    PL_ASSERT(snapshot_p->node_id != node_id);
+    PELOTON_ASSERT(snapshot_p->node_id != node_id);
 
     snapshot_p->node_id = node_id;
     snapshot_p->node_p = node_p;
@@ -5190,7 +5208,7 @@ class BwTree : public BwTreeBase {
       default: { return; }
     }  // switch
 
-    PL_ASSERT(false);
+    PELOTON_ASSERT(false);
     return;
   }
 
@@ -5255,9 +5273,9 @@ class BwTree : public BwTreeBase {
    */
   void TraverseBI(Context *context_p) {
   retry_traverse:
-    PL_ASSERT(context_p->abort_flag == false);
+    PELOTON_ASSERT(context_p->abort_flag == false);
 #ifdef BWTREE_DEBUG
-    PL_ASSERT(context_p->current_level == -1);
+    PELOTON_ASSERT(context_p->current_level == -1);
 #endif
 
     NodeID start_node_id = root_id.load();
@@ -5273,7 +5291,7 @@ class BwTree : public BwTreeBase {
       NodeID child_node_id = NavigateInnerNodeBI(context_p);
       if (context_p->abort_flag == true) {
         LOG_TRACE("Navigate Inner Node abort (BI). ABORT");
-        PL_ASSERT(child_node_id == INVALID_NODE_ID);
+        PELOTON_ASSERT(child_node_id == INVALID_NODE_ID);
         goto abort_traverse;
       }
 
@@ -5302,7 +5320,7 @@ class BwTree : public BwTreeBase {
 
   abort_traverse:
 #ifdef BWTREE_DEBUG
-    PL_ASSERT(context_p->current_level >= 0);
+    PELOTON_ASSERT(context_p->current_level >= 0);
     context_p->current_level = -1;
     context_p->abort_counter++;
 #endif
@@ -5312,16 +5330,16 @@ class BwTree : public BwTreeBase {
     context_p->abort_flag = false;
     goto retry_traverse;
 
-    PL_ASSERT(false);
+    PELOTON_ASSERT(false);
     return;
   }
 
   void TraverseReadOptimized(Context *context_p,
                              std::vector<ValueType> *value_list_p) {
   retry_traverse:
-    PL_ASSERT(context_p->abort_flag == false);
+    PELOTON_ASSERT(context_p->abort_flag == false);
 #ifdef BWTREE_DEBUG
-    PL_ASSERT(context_p->current_level == -1);
+    PELOTON_ASSERT(context_p->current_level == -1);
 #endif
     // This is the serialization point for reading/writing root node
     NodeID child_node_id = root_id.load();
@@ -5348,7 +5366,7 @@ class BwTree : public BwTreeBase {
         // as a double check
         // This is the only situation that this function returns
         // INVALID_NODE_ID
-        PL_ASSERT(child_node_id == INVALID_NODE_ID);
+        PELOTON_ASSERT(child_node_id == INVALID_NODE_ID);
 
         goto abort_traverse;
       }
@@ -5400,7 +5418,7 @@ class BwTree : public BwTreeBase {
   abort_traverse:
 #ifdef BWTREE_DEBUG
 
-    PL_ASSERT(context_p->current_level >= 0);
+    PELOTON_ASSERT(context_p->current_level >= 0);
 
     context_p->current_level = -1;
 
@@ -5414,7 +5432,7 @@ class BwTree : public BwTreeBase {
 
     goto retry_traverse;
 
-    PL_ASSERT(false);
+    PELOTON_ASSERT(false);
     return;
   }
 
@@ -5476,7 +5494,7 @@ class BwTree : public BwTreeBase {
       return false;
     }  // if CAS succeeds/fails
 
-    PL_ASSERT(false);
+    PELOTON_ASSERT(false);
     return false;
   }
 
@@ -5522,7 +5540,7 @@ class BwTree : public BwTreeBase {
       // The deleted node ID must resolve to a RemoveNode of either
       // Inner or Leaf category
       const BaseNode *garbage_node_p = GetNode(delete_item.second);
-      PL_ASSERT(garbage_node_p->IsRemoveNode());
+      PELOTON_ASSERT(garbage_node_p->IsRemoveNode());
 
       // Put the remove node into garbage chain
       // This will not remove the child node of the remove node, which
@@ -5559,7 +5577,7 @@ class BwTree : public BwTreeBase {
       return false;
     }
 
-    PL_ASSERT(false);
+    PELOTON_ASSERT(false);
     return false;
   }
 
@@ -5722,7 +5740,7 @@ class BwTree : public BwTreeBase {
         } else {
           LOG_ERROR("ERROR: Illegal node type: %d", static_cast<int>(type));
 
-          PL_ASSERT(false);
+          PELOTON_ASSERT(false);
         }  // If on type of merge node
 
         const KeyNodeIDPair *location;
@@ -5733,7 +5751,7 @@ class BwTree : public BwTreeBase {
 
         // If the item is found then next we post InnerDeleteNode
         if (found_pair_p != nullptr) {
-          PL_ASSERT(found_pair_p->second == delete_item_p->second);
+          PELOTON_ASSERT(found_pair_p->second == delete_item_p->second);
         } else {
           return;
         }
@@ -5790,7 +5808,7 @@ class BwTree : public BwTreeBase {
         }
 
 #ifdef BWTREE_DEBUG
-        PL_ASSERT(context_p->current_level >= 0);
+        PELOTON_ASSERT(context_p->current_level >= 0);
 #endif
 
         // If the parent snapshot has an invalid node ID then it must be the
@@ -5937,7 +5955,7 @@ class BwTree : public BwTreeBase {
               // InnerInsertNode) we need to abort and restart traversing
               const BaseNode *node_p = GetNode(found_item_p->second);
 
-              PL_ASSERT(node_p->GetType() == NodeType::InnerRemoveType ||
+              PELOTON_ASSERT(node_p->GetType() == NodeType::InnerRemoveType ||
                         node_p->GetType() == NodeType::LeafRemoveType);
 
 #endif
@@ -5968,7 +5986,7 @@ class BwTree : public BwTreeBase {
       }
     }  // switch
 
-    PL_ASSERT(false);
+    PELOTON_ASSERT(false);
     return;
   }
 
@@ -5978,7 +5996,7 @@ class BwTree : public BwTreeBase {
    * This function does not check delta chain size
    */
   inline void ConsolidateLeafNode(NodeSnapshot *snapshot_p) {
-    PL_ASSERT(snapshot_p->node_p->IsOnLeafDeltaChain() == true);
+    PELOTON_ASSERT(snapshot_p->node_p->IsOnLeafDeltaChain() == true);
 
     LeafNode *leaf_node_p = CollectAllValuesOnLeaf(snapshot_p);
 
@@ -6002,7 +6020,7 @@ class BwTree : public BwTreeBase {
    * This function does not check for inner delta chain length
    */
   inline void ConsolidateInnerNode(NodeSnapshot *snapshot_p) {
-    PL_ASSERT(snapshot_p->node_p->IsOnLeafDeltaChain() == false);
+    PELOTON_ASSERT(snapshot_p->node_p->IsOnLeafDeltaChain() == false);
 
     InnerNode *inner_node_p = CollectAllSepsOnInner(snapshot_p);
 
@@ -6074,7 +6092,7 @@ class BwTree : public BwTreeBase {
       // then parent node will have non-0 depth in order to avoid being too
       // large (see FindSplitNextKey() and FindMergePrevNextKey() and
       // JumpToLeftSibling())
-      // PL_ASSERT(node_p->metadata.depth == 0);
+      // PELOTON_ASSERT(node_p->metadata.depth == 0);
 
       return;
     }
@@ -6165,7 +6183,7 @@ class BwTree : public BwTreeBase {
         }
 
         // Since we would like to access its first element to get the low key
-        PL_ASSERT(new_leaf_node_p->GetSize() > 0);
+        PELOTON_ASSERT(new_leaf_node_p->GetSize() > 0);
 
         // The split key must be a valid key
         // Note that the lowkey for leaf node is not defined, so in the
@@ -6296,7 +6314,7 @@ class BwTree : public BwTreeBase {
         const KeyType &split_key = new_inner_node_p->GetLowKey();
 
         // New node has at least one item (this is the basic requirement)
-        PL_ASSERT(new_inner_node_p->GetSize() > 0);
+        PELOTON_ASSERT(new_inner_node_p->GetSize() > 0);
 
         const KeyNodeIDPair &first_item = new_inner_node_p->At(0);
 
@@ -6305,7 +6323,7 @@ class BwTree : public BwTreeBase {
         NodeID split_key_child_node_id = first_item.second;
 
         // This must be the split key
-        PL_ASSERT(KeyCmpEqual(first_item.first, split_key));
+        PELOTON_ASSERT(KeyCmpEqual(first_item.first, split_key));
 
         // NOTE: WE FETCH THE POINTER WITHOUT HELP ALONG SINCE WE ARE
         // NOW ON ITS PARENT
@@ -6465,7 +6483,7 @@ class BwTree : public BwTreeBase {
 
     // This CAS must succeed since nobody except this thread could remove
     // the ABORT delta on parent node
-    PL_ASSERT(ret == true);
+    PELOTON_ASSERT(ret == true);
     (void)ret;
 
     // NOTE: DO NOT FORGET TO REMOVE THE ABORT AFTER
@@ -6566,7 +6584,7 @@ class BwTree : public BwTreeBase {
     const KeyNodeIDPair &low_key_pair = node_p->GetLowKeyPair();
 
     // The caller must make sure this is true
-    PL_ASSERT(node_p->GetNextNodeID() == INVALID_NODE_ID ||
+    PELOTON_ASSERT(node_p->GetNextNodeID() == INVALID_NODE_ID ||
               KeyCmpLess(search_key, node_p->GetHighKey()));
 
     while (1) {
@@ -6640,7 +6658,7 @@ class BwTree : public BwTreeBase {
             return it;
           }
 
-          PL_ASSERT(false);
+          PELOTON_ASSERT(false);
           return nullptr;
         }  // InnerNode
         case NodeType::InnerSplitType: {
@@ -6669,13 +6687,13 @@ class BwTree : public BwTreeBase {
         default: {
           LOG_DEBUG("Unknown InnerNode type: %d", (int)node_p->GetType());
 
-          PL_ASSERT(false);
+          PELOTON_ASSERT(false);
           return nullptr;
         }  // default
       }    // switch
     }      // while(1)
 
-    PL_ASSERT(false);
+    PELOTON_ASSERT(false);
     return nullptr;
   }
 
@@ -6705,11 +6723,11 @@ class BwTree : public BwTreeBase {
     const BaseNode *node_p = snapshot_p->node_p;
 
     // First check that the node is always in the range of the inner node
-    PL_ASSERT(node_p->GetNextNodeID() == INVALID_NODE_ID ||
+    PELOTON_ASSERT(node_p->GetNextNodeID() == INVALID_NODE_ID ||
               KeyCmpLess(search_key, node_p->GetHighKey()));
 
     // We can only search for left sibling on inner delta chain
-    PL_ASSERT(node_p->IsOnLeafDeltaChain() == false);
+    PELOTON_ASSERT(node_p->IsOnLeafDeltaChain() == false);
 
     const InnerDataNode *data_node_list[node_p->GetDepth()];
 
@@ -6916,13 +6934,13 @@ class BwTree : public BwTreeBase {
         default: {
           LOG_ERROR("ERROR: Unknown node type = %d", static_cast<int>(type));
 
-          PL_ASSERT(false);
+          PELOTON_ASSERT(false);
         }
       }  // switch type
     }    // while 1
 
     // Should not reach here
-    PL_ASSERT(false);
+    PELOTON_ASSERT(false);
     return INVALID_NODE_ID;
   }
 
@@ -6994,8 +7012,12 @@ class BwTree : public BwTreeBase {
    *
    * This function returns false if value already exists
    * If CAS fails this function retries until it succeeds
+   * 
+   * Note that this function also takes a unique_key argument, to indicate whether
+   * we allow the same key with different values. For a primary key index this
+   * should be set true. By default we allow non-unique key
    */
-  bool Insert(const KeyType &key, const ValueType &value) {
+  bool Insert(const KeyType &key, const ValueType &value, bool unique_key=false) {
     LOG_TRACE("Insert called");
 
 #ifdef BWTREE_DEBUG
@@ -7012,7 +7034,7 @@ class BwTree : public BwTreeBase {
       // Also if the key previously exists in the delta chain
       // then return the position of the node using next_key_p
       // if there is none then return nullptr
-      const KeyValuePair *item_p = Traverse(&context, &value, &index_pair);
+      const KeyValuePair *item_p = Traverse(&context, &value, &index_pair, unique_key);
 
       // If the key-value pair already exists then return false
       if (item_p != nullptr) {
@@ -7374,7 +7396,7 @@ class BwTree : public BwTreeBase {
   NodeID first_leaf_id;
 
   std::atomic<NodeID> next_unused_node_id;
-  std::array<std::atomic<const BaseNode *>, MAPPING_TABLE_SIZE> mapping_table;
+  std::atomic<const BaseNode *> *mapping_table;
 
   // This list holds free NodeID which was removed by remove delta
   // We recycle NodeID in epoch manager
@@ -7563,6 +7585,8 @@ class BwTree : public BwTreeBase {
       // would always fail, until we have cleaned all epoch nodes
       current_epoch_p = nullptr;
 
+      LOG_TRACE("Clearing the epoch in ~EpochManager()...");
+
       // If all threads has exited then all thread counts are
       // 0, and therefore this should proceed way to the end
       ClearEpoch();
@@ -7586,7 +7610,7 @@ class BwTree : public BwTreeBase {
         ClearEpoch();
       }
 
-      PL_ASSERT(head_epoch_p == nullptr);
+      PELOTON_ASSERT(head_epoch_p == nullptr);
       LOG_TRACE("Garbage Collector has finished freeing all garbage nodes");
 
 #ifdef BWTREE_DEBUG
@@ -7600,6 +7624,20 @@ class BwTree : public BwTreeBase {
                 epoch_leave.load());
 #endif
 
+      // NOTE: Only unmap memory here because we need to access the mapping
+      // table in the above routine. If it was unmapped in ~BwTree() then this
+      // function will invoke illegal memory access
+      int munmap_ret = munmap(tree_p->mapping_table, 1024 * 1024 * 1024);
+
+      // Although failure of munmap is not fatal, we still print out 
+      // an error log entry
+      // Otherwise just trace log
+      if(munmap_ret != 0) {
+        LOG_ERROR("munmap() returns with %d", munmap_ret);
+      } else {
+        LOG_TRACE("Mapping table is unmapped for Bw-Tree");
+      }
+      
       return;
     }
 
@@ -7803,7 +7841,7 @@ class BwTree : public BwTreeBase {
 
       while (1) {
         node_p = next_node_p;
-        PL_ASSERT(node_p != nullptr);
+        PELOTON_ASSERT(node_p != nullptr);
 
         NodeType type = node_p->GetType();
 
@@ -7959,7 +7997,7 @@ class BwTree : public BwTreeBase {
             // This does not include INNER ABORT node
             LOG_ERROR("Unknown node type: %d", (int)type);
 
-            PL_ASSERT(false);
+            PELOTON_ASSERT(false);
             return;
         }  // switch
       }    // while 1
@@ -7990,7 +8028,7 @@ class BwTree : public BwTreeBase {
         // Since it could only be acquired and released by worker thread
         // the value must be >= 0
         int active_thread_count = head_epoch_p->active_thread_count.load();
-        PL_ASSERT(active_thread_count >= 0);
+        PELOTON_ASSERT(active_thread_count >= 0);
 
         // If we have seen an epoch whose count is not zero then all
         // epochs after that are protected and we stop
@@ -8213,7 +8251,7 @@ class BwTree : public BwTreeBase {
      */
     inline void IncRef() {
       ref_count++;
-      PL_ASSERT(ref_count != 0UL);
+      PELOTON_ASSERT(ref_count != 0UL);
 
       return;
     }
@@ -8241,7 +8279,7 @@ class BwTree : public BwTreeBase {
     inline void DecRef() {
       // for unsigned long the only thing we could ensure
       // is that it does not cross 0 boundary
-      PL_ASSERT(ref_count != 0UL);
+      PELOTON_ASSERT(ref_count != 0UL);
 
       ref_count--;
       if (ref_count == 0UL) {
@@ -8282,7 +8320,7 @@ class BwTree : public BwTreeBase {
       // plus data
       IteratorContext *ic_p =
           reinterpret_cast<IteratorContext *>(new char[size]);
-      PL_ASSERT(ic_p != nullptr);
+      PELOTON_ASSERT(ic_p != nullptr);
 
       // Initialize class IteratorContext part
       new (ic_p) IteratorContext{p_tree_p};
@@ -8295,7 +8333,7 @@ class BwTree : public BwTreeBase {
 
       // So after this function returns the ref count should be exactly 1
       ic_p->IncRef();
-      PL_ASSERT(ic_p->GetRefCount() == 1UL);
+      PELOTON_ASSERT(ic_p->GetRefCount() == 1UL);
 
       return ic_p;
     }
@@ -8362,14 +8400,14 @@ class BwTree : public BwTreeBase {
 
       // Load the first leaf page
       const BaseNode *node_p = p_tree_p->GetNode(FIRST_LEAF_NODE_ID);
-      PL_ASSERT(node_p != nullptr);
-      PL_ASSERT(node_p->IsOnLeafDeltaChain() == true);
+      PELOTON_ASSERT(node_p != nullptr);
+      PELOTON_ASSERT(node_p->IsOnLeafDeltaChain() == true);
 
       // Allocate space for IteratorContext + LeafNode Metadata + LeafNode data
       ic_p = IteratorContext::Get(p_tree_p, node_p);
       // This does not change after CollectAllValuesOnLeaf() is called
       kv_p = ic_p->GetLeafNode()->Begin();
-      PL_ASSERT(ic_p->GetRefCount() == 1UL);
+      PELOTON_ASSERT(ic_p->GetRefCount() == 1UL);
 
       // Use this to collect all values
       NodeSnapshot snapshot{FIRST_LEAF_NODE_ID, node_p};
@@ -8432,9 +8470,9 @@ class BwTree : public BwTreeBase {
       // If this is an empty iterator then do nothing; otherwise need to
       // release a reference to the current ic_p first
       if (ic_p == nullptr) {
-        PL_ASSERT(kv_p == nullptr);
+        PELOTON_ASSERT(kv_p == nullptr);
       } else {
-        PL_ASSERT(kv_p != nullptr);
+        PELOTON_ASSERT(kv_p != nullptr);
         ic_p->DecRef();
       }
 
@@ -8463,9 +8501,9 @@ class BwTree : public BwTreeBase {
       // For move assignment we do not touch the ref count
       // and just nullify the other object
       if (ic_p == nullptr) {
-        PL_ASSERT(kv_p == nullptr);
+        PELOTON_ASSERT(kv_p == nullptr);
       } else {
-        PL_ASSERT(kv_p != nullptr);
+        PELOTON_ASSERT(kv_p != nullptr);
       }
 
       // Add a reference to the IteratorContext
@@ -8501,7 +8539,7 @@ class BwTree : public BwTreeBase {
     bool IsEnd() const {
       // Empty iterator is naturally end iterator
       if (ic_p == nullptr) {
-        PL_ASSERT(kv_p == nullptr);
+        PELOTON_ASSERT(kv_p == nullptr);
 
         return true;
       }
@@ -8523,7 +8561,7 @@ class BwTree : public BwTreeBase {
     bool IsBegin() const {
       // This is both Begin() and End()
       if (ic_p == nullptr) {
-        PL_ASSERT(kv_p == nullptr);
+        PELOTON_ASSERT(kv_p == nullptr);
 
         return true;
       }
@@ -8543,7 +8581,7 @@ class BwTree : public BwTreeBase {
      */
     bool IsREnd() const {
       if (ic_p == nullptr) {
-        PL_ASSERT(kv_p == nullptr);
+        PELOTON_ASSERT(kv_p == nullptr);
 
         return true;
       }
@@ -8650,13 +8688,13 @@ class BwTree : public BwTreeBase {
      */
     ~ForwardIterator() {
       if (ic_p != nullptr) {
-        PL_ASSERT(kv_p != nullptr);
+        PELOTON_ASSERT(kv_p != nullptr);
         // If ic_p is not nullptr we know it is a valid reference and
         // just decrease reference counter for it. This might also call
         // destructor for ic_p instance if we release the last reference
         ic_p->DecRef();
       } else {
-        PL_ASSERT(kv_p == nullptr);
+        PELOTON_ASSERT(kv_p == nullptr);
       }
 
       return;
@@ -8749,7 +8787,7 @@ class BwTree : public BwTreeBase {
      * instance
      */
     void LowerBound(BwTree *p_tree_p, const KeyType *start_key_p) {
-      PL_ASSERT(start_key_p != nullptr);
+      PELOTON_ASSERT(start_key_p != nullptr);
       // This is required since start_key_p might be pointing inside the
       // currently buffered IteratorContext which will be destroyed
       // after new IteratorContext is created
@@ -8769,7 +8807,7 @@ class BwTree : public BwTreeBase {
 
         NodeSnapshot *snapshot_p = BwTree::GetLatestNodeSnapshot(&context);
         const BaseNode *node_p = snapshot_p->node_p;
-        PL_ASSERT(node_p->IsOnLeafDeltaChain() == true);
+        PELOTON_ASSERT(node_p->IsOnLeafDeltaChain() == true);
 
         // After this point, start_key_p from the last page becomes invalid
 
@@ -8781,7 +8819,7 @@ class BwTree : public BwTreeBase {
 
         // Refresh the IteratorContext object and also refresh kv_p
         ic_p = IteratorContext::Get(p_tree_p, node_p);
-        PL_ASSERT(ic_p->GetRefCount() == 1UL);
+        PELOTON_ASSERT(ic_p->GetRefCount() == 1UL);
 
         // Consolidate the current node and store all key value pairs
         // to the embedded leaf node
@@ -8836,12 +8874,12 @@ class BwTree : public BwTreeBase {
      *   (2) The current status must not be Begin() status
      */
     void MoveBackByOne() {
-      PL_ASSERT(kv_p != nullptr);
-      PL_ASSERT(ic_p != nullptr);
-      PL_ASSERT(IsREnd() == false);
+      PELOTON_ASSERT(kv_p != nullptr);
+      PELOTON_ASSERT(ic_p != nullptr);
+      PELOTON_ASSERT(IsREnd() == false);
 
       // This is an invalid state
-      PL_ASSERT(kv_p != ic_p->GetLeafNode()->REnd());
+      PELOTON_ASSERT(kv_p != ic_p->GetLeafNode()->REnd());
 
       // This will be used to call BwTree functions
       BwTree *tree_p = ic_p->GetTree();
@@ -8875,13 +8913,13 @@ class BwTree : public BwTreeBase {
         // We must have reached a node whose low key is less than the
         // low key we used as the search key
         // Either it has a -Inf low key, or the low key could be compared
-        PL_ASSERT((node_p->GetLowKeyPair().second == INVALID_NODE_ID) ||
+        PELOTON_ASSERT((node_p->GetLowKeyPair().second == INVALID_NODE_ID) ||
                   (tree_p->KeyCmpLess(node_p->GetLowKey(), low_key) == true));
 
         // Release the current leaf page, and
         ic_p->DecRef();
         ic_p = IteratorContext::Get(tree_p, node_p);
-        PL_ASSERT(ic_p->GetRefCount() == 1UL);
+        PELOTON_ASSERT(ic_p->GetRefCount() == 1UL);
         tree_p->CollectAllValuesOnLeaf(snapshot_p, ic_p->GetLeafNode());
 
         // Now we could safely release the reference
@@ -8930,13 +8968,13 @@ class BwTree : public BwTreeBase {
      */
     inline void MoveAheadByOne() {
       // Could not do this on an empty iterator
-      PL_ASSERT(ic_p != nullptr);
-      PL_ASSERT(kv_p != nullptr);
+      PELOTON_ASSERT(ic_p != nullptr);
+      PELOTON_ASSERT(kv_p != nullptr);
 
       // We could not be on the last page, since before calling this
       // function whether we are on the last page should be
       // checked
-      PL_ASSERT(IsEnd() == false);
+      PELOTON_ASSERT(IsEnd() == false);
 
       kv_p++;
 
@@ -8971,7 +9009,7 @@ class BwTree : public BwTreeBase {
   void AddGarbageNode(const BaseNode *node_p) {
     GarbageNode *garbage_node_p =
         new GarbageNode{GetGlobalEpoch(), (void *)(node_p)};
-    PL_ASSERT(garbage_node_p != nullptr);
+    PELOTON_ASSERT(garbage_node_p != nullptr);
 
     // Link this new node to the end of the linked list
     // and then update last_p
@@ -9025,7 +9063,7 @@ class BwTree : public BwTreeBase {
       epoch_manager.FreeEpochDeltaChain((const BaseNode *)first_p->node_p);
 
       delete first_p;
-      PL_ASSERT(GetGCMetaData(thread_id)->node_count != 0UL);
+      PELOTON_ASSERT(GetGCMetaData(thread_id)->node_count != 0UL);
       GetGCMetaData(thread_id)->node_count--;
 
       first_p = header_p->next_p;

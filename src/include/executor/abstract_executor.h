@@ -14,7 +14,7 @@
 
 #include "common/item_pointer.h"
 #include "executor/logical_tile.h"
-#include "type/types.h"
+#include "common/internal_types.h"
 
 namespace peloton {
 
@@ -96,7 +96,7 @@ class AbstractExecutor {
   template <class T>
   inline const T &GetPlanNode() {
     const T *node = dynamic_cast<const T *>(node_);
-    PL_ASSERT(node);
+    PELOTON_ASSERT(node);
     return *node;
   }
 

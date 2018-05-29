@@ -26,7 +26,7 @@ namespace codegen {
 
 void Inserter::Init(storage::DataTable *table,
                     executor::ExecutorContext *executor_context) {
-  PL_ASSERT(table && executor_context);
+  PELOTON_ASSERT(table && executor_context);
   table_ = table;
   executor_context_ = executor_context;
 }
@@ -34,22 +34,23 @@ void Inserter::Init(storage::DataTable *table,
 char *Inserter::AllocateTupleStorage() {
   location_ = table_->GetEmptyTupleSlot(nullptr);
 
-  // Get the tile offset assuming that it is in a tuple format
+  // Get the tile offset assuming that it is a row store
   auto tile_group = table_->GetTileGroupById(location_.block);
-  oid_t tile_offset, tile_column_offset;
-  tile_group->LocateTileAndColumn(0, tile_offset, tile_column_offset);
-  tile_ = tile_group->GetTileReference(tile_offset);
+  auto layout = tile_group->GetLayout();
+  PELOTON_ASSERT(layout.IsRowStore());
+  // layout is still a row store. Hence tile offset it 0
+  tile_ = tile_group->GetTileReference(0);
   return tile_->GetTupleLocation(location_.offset);
 }
 
 peloton::type::AbstractPool *Inserter::GetPool() {
   // This should be called after AllocateTupleStorage()
-  PL_ASSERT(tile_);
+  PELOTON_ASSERT(tile_);
   return tile_->GetPool();
 }
 
 void Inserter::Insert() {
-  PL_ASSERT(table_ && executor_context_ && tile_);
+  PELOTON_ASSERT(table_ && executor_context_ && tile_);
   auto *txn = executor_context_->GetTransaction();
   auto &txn_manager = concurrency::TransactionManagerFactory::GetInstance();
 

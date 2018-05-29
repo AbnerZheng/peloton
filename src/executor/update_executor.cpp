@@ -22,6 +22,8 @@
 #include "storage/data_table.h"
 #include "storage/tile_group_header.h"
 #include "storage/tile.h"
+#include "storage/storage_manager.h"
+#include "catalog/foreign_key.h"
 
 namespace peloton {
 namespace executor {
@@ -39,17 +41,19 @@ UpdateExecutor::UpdateExecutor(const planner::AbstractPlan *node,
  * @return true on success, false otherwise.
  */
 bool UpdateExecutor::DInit() {
-  PL_ASSERT(children_.size() == 1);
-  PL_ASSERT(target_table_ == nullptr);
-  PL_ASSERT(project_info_ == nullptr);
+  PELOTON_ASSERT(children_.size() == 1);
+  PELOTON_ASSERT(target_table_ == nullptr);
+  PELOTON_ASSERT(project_info_ == nullptr);
 
   // Grab settings from node
   const planner::UpdatePlan &node = GetPlanNode<planner::UpdatePlan>();
   target_table_ = node.GetTable();
   project_info_ = node.GetProjectInfo();
 
-  PL_ASSERT(target_table_);
-  PL_ASSERT(project_info_);
+  PELOTON_ASSERT(target_table_);
+  PELOTON_ASSERT(project_info_);
+
+  statement_write_set_.clear();
 
   return true;
 }
@@ -58,6 +62,7 @@ bool UpdateExecutor::PerformUpdatePrimaryKey(
     bool is_owner, storage::TileGroup *tile_group,
     storage::TileGroupHeader *tile_group_header, oid_t physical_tuple_id,
     ItemPointer &old_location) {
+
   auto &transaction_manager =
       concurrency::TransactionManagerFactory::GetInstance();
 
@@ -87,6 +92,7 @@ bool UpdateExecutor::PerformUpdatePrimaryKey(
     return false;
   }
   transaction_manager.PerformDelete(current_txn, old_location, new_location);
+  statement_write_set_.insert(new_location);
 
   ////////////////////////////////////////////
   // Insert tuple rather than install version
@@ -112,8 +118,29 @@ bool UpdateExecutor::PerformUpdatePrimaryKey(
     return false;
   }
 
-  transaction_manager.PerformInsert(current_txn, location, index_entry_ptr);
+  // Check the source table of any foreign key constraint
+  if (target_table_->GetForeignKeySrcCount() > 0) {
+    storage::Tuple prev_tuple(target_table_schema, true);
+    // Get a copy of the old tuple
+    for (oid_t column_itr = 0; column_itr < target_table_schema->GetColumnCount(); column_itr++) {
+      type::Value val = (old_tuple.GetValue(column_itr));
+      prev_tuple.SetValue(column_itr, val, executor_context_->GetPool());
+    }
 
+    if (target_table_->CheckForeignKeySrcAndCascade(&prev_tuple,
+                                                    &new_tuple,
+                                                    current_txn,
+                                                    executor_context_,
+                                                    true) == false)
+    {
+      transaction_manager.SetTransactionResult(current_txn,
+                                              peloton::ResultType::FAILURE);
+      return false;
+    }
+  }
+
+  transaction_manager.PerformInsert(current_txn, location, index_entry_ptr);
+  statement_write_set_.insert(location);
   return true;
 }
 
@@ -122,8 +149,8 @@ bool UpdateExecutor::PerformUpdatePrimaryKey(
  * @return true on success, false otherwise.
  */
 bool UpdateExecutor::DExecute() {
-  PL_ASSERT(children_.size() == 1);
-  PL_ASSERT(executor_context_);
+  PELOTON_ASSERT(children_.size() == 1);
+  PELOTON_ASSERT(executor_context_);
 
   // We are scanning over a logical tile.
   LOG_TRACE("Update executor :: 1 child ");
@@ -192,6 +219,11 @@ bool UpdateExecutor::DExecute() {
     }
     ///////////////////////////////////////////////////////////
 
+    
+    if (IsInStatementWriteSet(old_location)) {
+      continue;
+    }
+
     if (trigger_list != nullptr) {
       LOG_TRACE("size of trigger list in target table: %d",
                 trigger_list->GetTriggerListSize());
@@ -239,6 +271,8 @@ bool UpdateExecutor::DExecute() {
                                 executor_context_);
 
         transaction_manager.PerformUpdate(current_txn, old_location);
+        // we do not need to add any item pointer to statement-level write set
+        // here, because we do not generate any new version
       }
     }
     // if we have already obtained the ownership
@@ -336,6 +370,7 @@ bool UpdateExecutor::DExecute() {
                     new_location.offset);
           transaction_manager.PerformUpdate(current_txn, old_location,
                                             new_location);
+          statement_write_set_.insert(new_location);
 
           // TODO: Why don't we also do this in the if branch above?
           executor_context_->num_processed += 1;  // updated one

@@ -17,9 +17,9 @@
 
 #include "common/timer.h"
 #include "common/macros.h"
-#include "type/types.h"
+#include "common/internal_types.h"
 #include "common/exception.h"
-#include "container/circular_buffer.h"
+#include "common/container/circular_buffer.h"
 #include "statistics/abstract_metric.h"
 #include <mutex>
 
@@ -74,9 +74,19 @@ class LatencyMetric : public AbstractMetric {
     }
   }
 
+  // Stops the latency timer and records the total time elapsed
+  inline void RecordLatency(const double &latency_value) {
+    // Record this latency only if we can do so without blocking.
+    // Occasionally losing single latency measurements is fine.
+    std::unique_lock<std::mutex> lock(latency_mutex_, std::defer_lock);
+    if (lock.try_lock()) {
+      latencies_.PushBack(latency_value);
+    }
+  }
+
   // Returns the first latency value recorded
   inline double GetFirstLatencyValue() {
-    PL_ASSERT(latencies_.begin() != latencies_.end());
+    PELOTON_ASSERT(latencies_.begin() != latencies_.end());
     return *(latencies_.begin());
   }
 

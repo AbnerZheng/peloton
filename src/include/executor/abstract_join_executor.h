@@ -22,6 +22,12 @@
 namespace peloton {
 namespace executor {
 
+/**
+ * Base class for all join algorithm implementations.
+ * This is <b>deprecated</b>. Do not modify these classes.
+ * The old interpreted engine will be removed.
+ * @deprecated
+ */
 class AbstractJoinExecutor : public AbstractExecutor {
   AbstractJoinExecutor(const AbstractJoinExecutor &) = delete;
   AbstractJoinExecutor &operator=(const AbstractJoinExecutor &) = delete;
@@ -119,7 +125,7 @@ class AbstractJoinExecutor : public AbstractExecutor {
     if (right_tile == nullptr) {
       non_empty_tile = left_tile;
     }
-    PL_ASSERT(non_empty_tile != nullptr);
+    PELOTON_ASSERT(non_empty_tile != nullptr);
     return non_empty_tile;
   }
 

@@ -12,7 +12,7 @@
 
 #include "executor/seq_scan_executor.h"
 
-#include "type/types.h"
+#include "common/internal_types.h"
 #include "type/value_factory.h"
 #include "executor/logical_tile.h"
 #include "executor/logical_tile_factory.h"
@@ -89,8 +89,8 @@ bool SeqScanExecutor::DExecute() {
     // FIXME Check all requirements for children_.size() == 0 case.
     LOG_TRACE("Seq Scan executor :: 1 child ");
 
-    PL_ASSERT(target_table_ == nullptr);
-    PL_ASSERT(column_ids_.size() == 0);
+    PELOTON_ASSERT(target_table_ == nullptr);
+    PELOTON_ASSERT(column_ids_.size() == 0);
 
     while (children_[0]->Execute()) {
       std::unique_ptr<LogicalTile> tile(children_[0]->GetOutput());
@@ -134,8 +134,8 @@ bool SeqScanExecutor::DExecute() {
                     ->GetCreateType() == CreateType::INDEX)) {
     LOG_TRACE("Seq Scan executor :: 0 child ");
 
-    PL_ASSERT(target_table_ != nullptr);
-    PL_ASSERT(column_ids_.size() > 0);
+    PELOTON_ASSERT(target_table_ != nullptr);
+    PELOTON_ASSERT(column_ids_.size() > 0);
     if (children_.size() > 0 && !index_done_) {
       children_[0]->Execute();
       // This stops continuous executions due to
@@ -172,7 +172,9 @@ bool SeqScanExecutor::DExecute() {
           // if the tuple is visible, then perform predicate evaluation.
           if (predicate_ == nullptr) {
             position_list.push_back(tuple_id);
-            auto res = transaction_manager.PerformRead(current_txn, location,
+            auto res = transaction_manager.PerformRead(current_txn,
+                                                       location,
+                                                       tile_group_header,
                                                        acquire_owner);
             if (!res) {
               transaction_manager.SetTransactionResult(current_txn,
@@ -188,7 +190,9 @@ bool SeqScanExecutor::DExecute() {
             LOG_TRACE("Evaluation result: %s", eval.GetInfo().c_str());
             if (eval.IsTrue()) {
               position_list.push_back(tuple_id);
-              auto res = transaction_manager.PerformRead(current_txn, location,
+              auto res = transaction_manager.PerformRead(current_txn,
+                                                         location,
+                                                         tile_group_header,
                                                          acquire_owner);
               if (!res) {
                 transaction_manager.SetTransactionResult(current_txn,
@@ -227,7 +231,7 @@ void SeqScanExecutor::UpdatePredicate(const std::vector<oid_t> &column_ids,
                                       const std::vector<type::Value> &values) {
   std::vector<oid_t> predicate_column_ids;
 
-  PL_ASSERT(column_ids.size() <= column_ids_.size());
+  PELOTON_ASSERT(column_ids.size() <= column_ids_.size());
 
   // columns_ids is the column id
   // in the join executor, should

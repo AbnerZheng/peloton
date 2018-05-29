@@ -13,10 +13,11 @@
 #pragma once
 
 #include <memory>
+#include "common/internal_types.h"
 #include "common/sql_node_visitor.h"
 #include "expression/abstract_expression.h"
+#include "parser/select_statement.h"
 #include "parser/sql_statement.h"
-#include "type/types.h"
 
 namespace peloton {
 namespace parser {
@@ -194,6 +195,7 @@ struct ColumnDefinition {
   std::unique_ptr<expression::AbstractExpression> default_value = nullptr;
   std::unique_ptr<expression::AbstractExpression> check_expression = nullptr;
 
+  std::string fk_sink_table_name;
   std::vector<std::string> primary_key;
   std::vector<std::string> foreign_key_source;
   std::vector<std::string> foreign_key_sink;
@@ -213,7 +215,7 @@ struct ColumnDefinition {
  */
 class CreateStatement : public TableRefStatement {
  public:
-  enum CreateType { kTable, kDatabase, kIndex, kTrigger };
+  enum CreateType { kTable, kDatabase, kIndex, kTrigger, kSchema, kView };
 
   CreateStatement(CreateType type)
       : TableRefStatement(StatementType::CREATE),
@@ -224,20 +226,26 @@ class CreateStatement : public TableRefStatement {
 
   virtual void Accept(SqlNodeVisitor *v) override { v->Visit(this); }
 
+  const std::string GetInfo(int num_indent) const override;
+
+  const std::string GetInfo() const override;
+
   CreateType type;
   bool if_not_exists;
 
   std::vector<std::unique_ptr<ColumnDefinition>> columns;
+  std::vector<std::unique_ptr<ColumnDefinition>> foreign_keys;
+
   std::vector<std::string> index_attrs;
-
   IndexType index_type;
-
   std::string index_name;
-  std::string trigger_name;
-  std::string database_name;
+
+  std::string view_name;
+  std::unique_ptr<SelectStatement> view_query;
 
   bool unique = false;
 
+  std::string trigger_name;
   std::vector<std::string> trigger_funcname;
   std::vector<std::string> trigger_args;
   std::vector<std::string> trigger_columns;

@@ -18,17 +18,65 @@ namespace function {
 
 // Get square root of the value
 type::Value DecimalFunctions::Sqrt(const std::vector<type::Value> &args) {
-  PL_ASSERT(args.size() == 1);
+  PELOTON_ASSERT(args.size() == 1);
   if (args[0].IsNull()) {
     return type::ValueFactory::GetNullValueByType(type::TypeId::DECIMAL);
   }
   return args[0].Sqrt();
 }
 
+// Get Abs of value
+type::Value DecimalFunctions::_Abs(const std::vector<type::Value> &args) {
+  PELOTON_ASSERT(args.size() == 1);
+  if (args[0].IsNull()) {
+    return type::ValueFactory::GetNullValueByType(type::TypeId::DECIMAL);
+  }
+  switch (args[0].GetElementType()) {
+    case type::TypeId::DECIMAL:
+      {
+        double result;
+        result = Abs(args[0].GetAs<double>());
+        return type::ValueFactory::GetDecimalValue(result);
+      }
+      break;
+    case type::TypeId::INTEGER:
+      {
+        int32_t result;
+        result = abs(args[0].GetAs<int32_t>());
+        return type::ValueFactory::GetIntegerValue(result);
+        break;
+      }
+    case type::TypeId::BIGINT:
+      {
+        int64_t result;
+        result = std::abs(args[0].GetAs<int64_t>());
+        return type::ValueFactory::GetBigIntValue(result);
+      }
+      break;
+    case type::TypeId::SMALLINT:
+      {
+        int16_t result;
+        result = abs(args[0].GetAs<int16_t>());
+        return type::ValueFactory::GetSmallIntValue(result);
+      }
+      break;
+    case type::TypeId::TINYINT:
+      {
+        int8_t result;
+        result = abs(args[0].GetAs<int8_t>());
+        return type::ValueFactory::GetTinyIntValue(result);
+      }
+      break;
+    default:
+      return type::ValueFactory::GetNullValueByType(type::TypeId::DECIMAL);
+  }
+}
+
+double DecimalFunctions::Abs(const double args) { return fabs(args); }
 
 // Get ceiling of value
 type::Value DecimalFunctions::_Ceil(const std::vector<type::Value> &args) {
-  PL_ASSERT(args.size() == 1);
+  PELOTON_ASSERT(args.size() == 1);
   if (args[0].IsNull()) {
     return type::ValueFactory::GetNullValueByType(type::TypeId::DECIMAL);
   }
@@ -59,7 +107,7 @@ double DecimalFunctions::Ceil(const double args) { return ceil(args); }
 
 // Get floor value
 type::Value DecimalFunctions::_Floor(const std::vector<type::Value> &args) {
-  PL_ASSERT(args.size() == 1);
+  PELOTON_ASSERT(args.size() == 1);
   if (args[0].IsNull()) {
     return type::ValueFactory::GetNullValueByType(type::TypeId::DECIMAL);
   }
@@ -90,7 +138,7 @@ double DecimalFunctions::Floor(const double val) { return floor(val); }
 
 // Round to nearest integer
 type::Value DecimalFunctions::_Round(const std::vector<type::Value> &args) {
-  PL_ASSERT(args.size() == 1);
+  PELOTON_ASSERT(args.size() == 1);
   if (args[0].IsNull()) {
     return type::ValueFactory::GetNullValueByType(type::TypeId::DECIMAL);
   }

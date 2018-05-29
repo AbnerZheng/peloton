@@ -14,7 +14,7 @@
 #pragma once
 
 #include <unordered_map>
-#include "type/types.h"
+#include "common/internal_types.h"
 #include "type/value.h"
 #include "common/exception.h"
 #include "common/printable.h"
@@ -29,6 +29,7 @@ namespace settings {
 class SettingsManager : public Printable {
  public:
   static int32_t GetInt(SettingId id);
+  static double GetDouble(SettingId id);
   static bool GetBool(SettingId id);
   static std::string GetString(SettingId id);
 
@@ -81,6 +82,8 @@ class SettingsManager : public Printable {
                      const type::Value &value,
                      const std::string &description,
                      const type::Value &default_value,
+                     const type::Value &min_value,
+                     const type::Value &max_value,
                      bool is_mutable, bool is_persistent);
 
   type::Value GetValue(SettingId id);

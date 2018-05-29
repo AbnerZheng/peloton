@@ -19,7 +19,7 @@
 #include "common/harness.h"
 
 #include "catalog/schema.h"
-#include "type/types.h"
+#include "common/internal_types.h"
 #include "type/value.h"
 #include "type/value_factory.h"
 #include "concurrency/transaction_context.h"
@@ -83,25 +83,29 @@ storage::DataTable *CreateTable() {
   column_map1[1] = std::make_pair(0, 1);
   column_map1[2] = std::make_pair(1, 0);
   column_map1[3] = std::make_pair(1, 1);
+  std::shared_ptr<const storage::Layout> layout1 =
+      std::make_shared<const storage::Layout>(column_map1);
 
   std::map<oid_t, std::pair<oid_t, oid_t>> column_map2;
   column_map2[0] = std::make_pair(0, 0);
   column_map2[1] = std::make_pair(1, 0);
   column_map2[2] = std::make_pair(1, 1);
   column_map2[3] = std::make_pair(1, 2);
+  std::shared_ptr<const storage::Layout> layout2 =
+      std::make_shared<const storage::Layout>(column_map2);
 
   // Create tile groups.
   table->AddTileGroup(std::shared_ptr<storage::TileGroup>(
       storage::TileGroupFactory::GetTileGroup(
           INVALID_OID, INVALID_OID,
           TestingHarness::GetInstance().GetNextTileGroupId(), table.get(),
-          schemas1, column_map1, tuple_count)));
+          schemas1, layout1, tuple_count)));
 
   table->AddTileGroup(std::shared_ptr<storage::TileGroup>(
       storage::TileGroupFactory::GetTileGroup(
           INVALID_OID, INVALID_OID,
           TestingHarness::GetInstance().GetNextTileGroupId(), table.get(),
-          schemas2, column_map2, tuple_count)));
+          schemas2, layout2, tuple_count)));
 
   TestingExecutorUtil::PopulateTiles(table->GetTileGroup(0), tuple_count);
   TestingExecutorUtil::PopulateTiles(table->GetTileGroup(1), tuple_count);
@@ -126,7 +130,7 @@ storage::DataTable *CreateTable() {
  */
 expression::AbstractExpression *CreatePredicate(
     const std::set<oid_t> &tuple_ids) {
-  PL_ASSERT(tuple_ids.size() >= 1);
+  PELOTON_ASSERT(tuple_ids.size() >= 1);
 
   expression::AbstractExpression *predicate =
       expression::ExpressionUtil::ConstantValueFactory(
@@ -238,7 +242,7 @@ void RunTest(executor::SeqScanExecutor &executor, int expected_num_tiles,
           (type::ValueFactory::GetVarcharValue(std::to_string(val2)));
       type::Value val =
           (result_tiles[i]->GetValue(new_tuple_id, expected_num_cols - 1));
-      EXPECT_TRUE(val.CompareEquals(string_value) == type::CmpBool::TRUE);
+      EXPECT_TRUE(val.CompareEquals(string_value) == CmpBool::CmpTrue);
     }
     EXPECT_EQ(0, expected_tuples_left.size());
   }

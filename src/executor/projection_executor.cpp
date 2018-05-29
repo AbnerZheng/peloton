@@ -14,7 +14,7 @@
 
 #include "planner/projection_plan.h"
 #include "common/logger.h"
-#include "type/types.h"
+#include "common/internal_types.h"
 #include "executor/logical_tile.h"
 #include "executor/logical_tile_factory.h"
 #include "common/container_tuple.h"
@@ -38,7 +38,7 @@ ProjectionExecutor::ProjectionExecutor(const planner::AbstractPlan *node,
  */
 bool ProjectionExecutor::DInit() {
   // NOTE: We only handle 1 child or no child for now
-  PL_ASSERT(children_.size() < 2);
+  PELOTON_ASSERT(children_.size() < 2);
 
   // Grab settings from plan node
   const planner::ProjectionPlan &node = GetPlanNode<planner::ProjectionPlan>();
@@ -55,10 +55,10 @@ bool ProjectionExecutor::DInit() {
  * @return true on success, false otherwise.
  */
 bool ProjectionExecutor::DExecute() {
-  PL_ASSERT(project_info_);
-  PL_ASSERT(schema_);
+  PELOTON_ASSERT(project_info_);
+  PELOTON_ASSERT(schema_);
   // NOTE: We only handle 1 child or no child for now
-  PL_ASSERT(children_.size() < 2);
+  PELOTON_ASSERT(children_.size() < 2);
 
   if (children_.size() == 0) {
     if (finished_) return false;

@@ -13,7 +13,6 @@
 #pragma once
 
 #include "codegen/aggregation.h"
-#include "codegen/compilation_context.h"
 #include "codegen/operator/operator_translator.h"
 #include "codegen/pipeline.h"
 
@@ -37,7 +36,7 @@ class GlobalGroupByTranslator : public OperatorTranslator {
                           CompilationContext &context, Pipeline &pipeline);
 
   // Nothing to initialize
-  void InitializeState() override;
+  void InitializeQueryState() override;
 
   // No helper functions
   void DefineAuxiliaryFunctions() override {}
@@ -49,9 +48,7 @@ class GlobalGroupByTranslator : public OperatorTranslator {
   void Consume(ConsumerContext &context, RowBatch::Row &row) const override;
 
   // No state to tear down
-  void TearDownState() override;
-
-  std::string GetName() const override;
+  void TearDownQueryState() override;
 
  private:
   //===--------------------------------------------------------------------===//
@@ -77,9 +74,6 @@ class GlobalGroupByTranslator : public OperatorTranslator {
   };
 
  private:
-  // The aggregation plan
-  const planner::AggregatePlan &plan_;
-
   // The pipeline the child operator of this aggregation belongs to
   Pipeline child_pipeline_;
 
@@ -87,10 +81,7 @@ class GlobalGroupByTranslator : public OperatorTranslator {
   Aggregation aggregation_;
 
   // The ID of our materialization buffer in the runtime state
-  RuntimeState::StateID mat_buffer_id_;
-
-  // The ID of our output vector in the runtime state
-  RuntimeState::StateID output_vector_id_;
+  QueryState::Id mat_buffer_id_;
 };
 
 }  // namespace codegen

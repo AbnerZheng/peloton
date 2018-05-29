@@ -54,7 +54,7 @@
  *
  * See isolation_level_test.cpp for examples.
  */
-
+#include <initializer_list>
 #include "catalog/schema.h"
 #include "common/harness.h"
 #include "concurrency/transaction_context.h"
@@ -68,7 +68,7 @@
 #include "storage/tile_group_header.h"
 #include "storage/tuple.h"
 #include "catalog/catalog_defaults.h"
-#include "type/types.h"
+#include "common/internal_types.h"
 #pragma once
 
 namespace peloton {
@@ -241,7 +241,8 @@ class TransactionThread {
 
     if (cur_seq == 0) {
       if (schedule->declared_ro == true) {
-        txn = txn_manager->BeginTransaction(IsolationLevelType::READ_ONLY);
+        /** starts a read only transaction*/
+        txn = txn_manager->BeginTransaction(0, IsolationLevelType::SNAPSHOT, true);
       } else {
         txn = txn_manager->BeginTransaction();
       }
@@ -300,7 +301,7 @@ class TransactionThread {
       case TXN_OP_ABORT: {
         LOG_INFO("Txn %d Abort", schedule->schedule_id);
         // Assert last operation
-        PL_ASSERT(cur_seq == (int)schedule->operations.size());
+        PELOTON_ASSERT(cur_seq == (int)schedule->operations.size());
         schedule->txn_result = txn_manager->AbortTransaction(txn);
         txn = NULL;
         break;
@@ -348,13 +349,14 @@ class TransactionScheduler {
  public:
   TransactionScheduler(size_t num_txn, storage::DataTable *datatable_,
                        concurrency::TransactionManager *txn_manager_,
-                       bool first_as_ro = false)
+                       std::set<int> read_only_ = {})
       : txn_manager(txn_manager_),
         table(datatable_),
         time(0),
         concurrent(false) {
+
     for (size_t i = 0; i < num_txn; i++) {
-      if (first_as_ro && i == 0) {
+      if (read_only_.find(i) != read_only_.end()) {
         schedules.emplace_back(i, true);
       } else {
         schedules.emplace_back(i, false);
@@ -395,7 +397,7 @@ class TransactionScheduler {
   }
 
   TransactionScheduler &Txn(int txn_id) {
-    PL_ASSERT(txn_id < (int)schedules.size());
+    PELOTON_ASSERT(txn_id < (int)schedules.size());
     cur_txn_id = txn_id;
     return *this;
   }

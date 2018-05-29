@@ -15,12 +15,8 @@
 #include "expression/parameter.h"
 
 namespace peloton {
-
-namespace type {
-class Value;
-}
-
 namespace codegen {
+
 class QueryParametersMap {
  public:
   QueryParametersMap() = default;
@@ -45,7 +41,7 @@ class QueryParametersMap {
 
   uint32_t GetIndex(const expression::AbstractExpression *expression) const {
     auto param = map_.find(expression);
-    PL_ASSERT(param != map_.end());
+    PELOTON_ASSERT(param != map_.end());
     return param->second;
   }
 

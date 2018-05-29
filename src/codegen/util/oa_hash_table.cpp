@@ -6,13 +6,11 @@
 //
 // Identification: src/codegen/util/oa_hash_table.cpp
 //
-// Copyright (c) 2015-2017, Carnegie Mellon University Database Group
+// Copyright (c) 2015-2018, Carnegie Mellon University Database Group
 //
 //===----------------------------------------------------------------------===//
 
 #include "codegen/util/oa_hash_table.h"
-
-#include <string.h>
 
 #include "common/logger.h"
 #include "common/platform.h"
@@ -30,42 +28,57 @@ uint32_t OAHashTable::kDefaultInitialSize = 8 * 1024;
 // The default capacity of key-value (overflow) lists when we create them
 uint32_t OAHashTable::kInitialKVListCapacity = 8;
 
-//===----------------------------------------------------------------------===//
-// Initialize the hash table. Here we configure the table to store keys and
-// values of the provided size. We also need to find an appropriate size for the
-// table given the estimate size.
-//===----------------------------------------------------------------------===//
-void OAHashTable::Init(uint64_t key_size, uint64_t value_size,
-                       uint64_t estimated_num_entries) {
-  // Setup the sizes
-  key_size_ = key_size;
-  value_size_ = value_size;
-
-  // The size of the HashEntry: header + key + value.
-  entry_size_ = sizeof(HashEntry) + key_size_ + value_size_;
-
-  // Find a power of two greater than or equal to the estimated size
-  num_buckets_ = NextPowerOf2(estimated_num_entries);
-
-  // Bucket mask for mapping the hash value into bucket index into the array
-  bucket_mask_ = num_buckets_ - 1;
-
+OAHashTable::OAHashTable(uint64_t key_size, uint64_t value_size,
+                         uint64_t estimated_num_entries)
+    : buckets_(nullptr),
+      num_buckets_(NextPowerOf2(estimated_num_entries)),
+      bucket_mask_(num_buckets_ - 1),
+      num_valid_buckets_(0),
+      num_entries_(0),
+      resize_threshold_(num_buckets_ >> 1),
+      key_size_(key_size),
+      value_size_(value_size) {
   // Sanity check
-  PL_ASSERT((num_buckets_ & bucket_mask_) == 0);
+  PELOTON_ASSERT((num_buckets_ & bucket_mask_) == 0);
 
-  // No elements in the table right now
-  num_entries_ = num_valid_buckets_ = 0;
-
-  // We maintain a load factor of 50% since this is an easy number to compute
-  resize_threshold_ = num_buckets_ >> 1;
-
-  // Create bucket array. We don't use regular "new" since the size of a
-  // HashEntry is known at runtime only.
+  // Create bucket array
+  entry_size_ = sizeof(HashEntry) + key_size_ + value_size_;
   buckets_ = static_cast<HashEntry *>(malloc(entry_size_ * num_buckets_));
 
   // Set status code of all buckets to FREE
   InitializeArray(buckets_);
 }
+
+OAHashTable::~OAHashTable() {
+  LOG_DEBUG("Cleaning hash table with %" PRId64 " entries ...", num_entries_);
+
+  uint64_t processed_count = 0;
+  char *current_entry_char_p = reinterpret_cast<char *>(buckets_);
+
+  // Iterate buckets array looking for overflow kv lists to free
+  while (processed_count < num_valid_buckets_) {
+    auto *current_entry = reinterpret_cast<HashEntry *>(current_entry_char_p);
+
+    if (!current_entry->IsFree()) {
+      processed_count++;
+      if (current_entry->HasKeyValueList()) {
+        free(current_entry->kv_list);
+      }
+    }
+
+    current_entry_char_p += entry_size_;
+  }
+
+  // Free main buckets array
+  free(buckets_);
+}
+
+void OAHashTable::Init(OAHashTable &table, uint64_t key_size,
+                       uint64_t value_size, uint64_t estimated_num_entries) {
+  new (&table) OAHashTable(key_size, value_size, estimated_num_entries);
+}
+
+void OAHashTable::Destroy(OAHashTable &table) { table.~OAHashTable(); }
 
 //===----------------------------------------------------------------------===//
 // Find the next available slot in the key value list. If the list is already
@@ -84,7 +97,7 @@ char *OAHashTable::StoreToKeyValueList(KeyValueList **kv_list_p_p) {
   KeyValueList *kv_list_p = *kv_list_p_p;
 
   // Size always <= capacity
-  PL_ASSERT(kv_list_p->capacity >= kv_list_p->size);
+  PELOTON_ASSERT(kv_list_p->capacity >= kv_list_p->size);
 
   // We always need this to compute something
   uint32_t size = kv_list_p->size;
@@ -110,10 +123,10 @@ char *OAHashTable::StoreToKeyValueList(KeyValueList **kv_list_p_p) {
     uint64_t new_kv_list_length = GetCurrentKeyValueListSize(new_capacity);
 
     kv_list_p = static_cast<KeyValueList *>(malloc(new_kv_list_length));
-    PL_ASSERT(kv_list_p != nullptr);
+    PELOTON_ASSERT(kv_list_p != nullptr);
 
     // Copy from the old memory chunk to the new chunk
-    PL_MEMCPY(kv_list_p, *kv_list_p_p, current_length);
+    PELOTON_MEMCPY(kv_list_p, *kv_list_p_p, current_length);
 
     // Update capacity field after copying
     kv_list_p->capacity = new_capacity;
@@ -141,11 +154,11 @@ OAHashTable::HashEntry *OAHashTable::FindNextFreeEntry(uint64_t hash_value) {
       reinterpret_cast<uint64_t>(buckets_) + index * entry_size_;
 
   // Must find one since we maintain load factor <= 50
-  while (1) {
-    HashEntry *entry_p = reinterpret_cast<HashEntry *>(current_entry_int);
+  while (true) {
+    auto *entry = reinterpret_cast<HashEntry *>(current_entry_int);
 
-    if (entry_p->IsFree()) {
-      return entry_p;
+    if (entry->IsFree()) {
+      return entry;
     }
 
     current_entry_int += entry_size_;
@@ -158,7 +171,7 @@ OAHashTable::HashEntry *OAHashTable::FindNextFreeEntry(uint64_t hash_value) {
     }
   }
 
-  PL_ASSERT(false);
+  PELOTON_ASSERT(false);
   return nullptr;
 }
 
@@ -217,8 +230,8 @@ char *OAHashTable::StoreTuple(HashEntry *entry, uint64_t hash) {
     entry->kv_list = static_cast<KeyValueList *>(malloc(
         GetCurrentKeyValueListSize(OAHashTable::kInitialKVListCapacity)));
 
-    PL_ASSERT(entry->kv_list != nullptr);
-    PL_ASSERT(entry->HasKeyValueList());
+    PELOTON_ASSERT(entry->kv_list != nullptr);
+    PELOTON_ASSERT(entry->HasKeyValueList());
 
     // Initialize members - also copy the current data into the kv list
     // to simplify iterating over the hash table
@@ -229,7 +242,7 @@ char *OAHashTable::StoreTuple(HashEntry *entry, uint64_t hash) {
     // in the HashEntry to provide a fast path for key comparison during probing
     // because no matter whether there is a KeyValueList, the key is always at
     // the same location.
-    PL_MEMCPY(entry->kv_list->data, entry->data + key_size_, value_size_);
+    PELOTON_MEMCPY(entry->kv_list->data, entry->data + key_size_, value_size_);
 
     // Return the second element's payload. The first element has been copied
     // from the HashEntry. This pointer is for dumping value.
@@ -272,7 +285,7 @@ void OAHashTable::InitializeArray(HashEntry *entries) {
 //===----------------------------------------------------------------------===//
 void OAHashTable::Resize(HashEntry **entry_p_p) {
   // Make it an assertion to prevent potential bugs
-  PL_ASSERT(NeedsResize());
+  PELOTON_ASSERT(NeedsResize());
 
   LOG_DEBUG("Resizing hash-table from %llu buckets to %llu",
             (unsigned long long)num_buckets_,
@@ -346,7 +359,7 @@ void OAHashTable::Resize(HashEntry **entry_p_p) {
 
       // Copy everything, including is_free flag, hash value and key-value
       // to the new free entry we just found
-      PL_MEMCPY(new_entry_char_p, current_entry_char_p, entry_size_);
+      PELOTON_MEMCPY(new_entry_char_p, current_entry_char_p, entry_size_);
     }
 
     // No matter we ignore an entry or not this has to be done
@@ -356,41 +369,6 @@ void OAHashTable::Resize(HashEntry **entry_p_p) {
   // Free the old array after probing of all elements, and then update
   free(buckets_);
   buckets_ = reinterpret_cast<HashEntry *>(new_buckets);
-}
-
-//===----------------------------------------------------------------------===//
-// Clean up any resources this hash table has
-//
-// We need to first scan the array to find out all collision kv lists, delete
-// them, and then delete the entire array.
-//===----------------------------------------------------------------------===//
-void OAHashTable::Destroy() {
-  LOG_DEBUG("Cleaning up hash table with %llu entries ...",
-            (unsigned long long)num_entries_);
-
-  uint64_t processed_count = 0;
-  char *current_entry_char_p = reinterpret_cast<char *>(buckets_);
-
-  // Iterate buckets array looking for overflow kv lists to free
-  while (processed_count < num_valid_buckets_) {
-    HashEntry *current_entry_p =
-        reinterpret_cast<HashEntry *>(current_entry_char_p);
-
-    if (!current_entry_p->IsFree()) {
-      // This variable counts non-free variables
-      processed_count++;
-
-      // If the entry has a list then free the memory
-      if (current_entry_p->HasKeyValueList()) {
-        free(current_entry_p->kv_list);
-      }
-    }
-
-    current_entry_char_p += entry_size_;
-  }
-
-  // Free main buckets array
-  free(buckets_);
 }
 
 OAHashTable::Iterator OAHashTable::begin() { return Iterator(*this, true); }

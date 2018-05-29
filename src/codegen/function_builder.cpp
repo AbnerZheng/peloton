@@ -18,36 +18,97 @@
 namespace peloton {
 namespace codegen {
 
-// We preserve the state of any ongoing function construction in order to be
-// able to restore it after this function has been fully completed. Thus,
-// FunctionBuilders are nestable, allowing the definition of a function to begin
-// while in midst of defining another function.
-FunctionBuilder::FunctionBuilder(
-    CodeContext &code_context, std::string name, llvm::Type *ret_type,
-    const std::vector<std::pair<std::string, llvm::Type *>> &args)
-    : finished_(false),
-      code_context_(code_context),
-      previous_function_(code_context_.GetCurrentFunction()),
-      previous_insert_point_(code_context_.GetBuilder().GetInsertBlock()),
-      overflow_bb_(nullptr),
-      divide_by_zero_bb_(nullptr) {
-  // Collect function argument types
+namespace {
+
+llvm::Function *ConstructFunction(
+    CodeContext &cc, const std::string &name,
+    FunctionDeclaration::Visibility visibility, llvm::Type *ret_type,
+    const std::vector<FunctionDeclaration::ArgumentInfo> &args) {
+  // Collect the function argument types
   std::vector<llvm::Type *> arg_types;
   for (auto &arg : args) {
-    arg_types.push_back(arg.second);
+    arg_types.push_back(arg.type);
+  }
+
+  // Determine function visibility
+  llvm::Function::LinkageTypes linkage;
+  switch (visibility) {
+    case FunctionDeclaration::Visibility::External:
+      linkage = llvm::Function::LinkageTypes::ExternalLinkage;
+      break;
+    case FunctionDeclaration::Visibility::ExternalAvailable:
+      linkage = llvm::Function::LinkageTypes::AvailableExternallyLinkage;
+      break;
+    case FunctionDeclaration::Visibility::Internal:
+      linkage = llvm::Function::LinkageTypes::InternalLinkage;
+      break;
   }
 
   // Declare the function
   auto *fn_type = llvm::FunctionType::get(ret_type, arg_types, false);
-  func_ = llvm::Function::Create(fn_type, llvm::Function::ExternalLinkage, name,
-                                 &code_context_.GetModule());
+  auto *func_decl =
+      llvm::Function::Create(fn_type, linkage, name, &cc.GetModule());
 
   // Set the argument names
   auto arg_iter = args.begin();
-  for (auto iter = func_->arg_begin(), end = func_->arg_end(); iter != end;
-       iter++, arg_iter++) {
-    iter->setName(arg_iter->first);
+  for (auto iter = func_decl->arg_begin(), end = func_decl->arg_end();
+       iter != end; iter++, arg_iter++) {
+    iter->setName(arg_iter->name);
   }
+
+  return func_decl;
+}
+
+}  // namespace
+
+//===----------------------------------------------------------------------===//
+//
+// FunctionDeclaration
+//
+//===----------------------------------------------------------------------===//
+
+FunctionDeclaration::FunctionDeclaration(
+    CodeContext &cc, const std::string &name,
+    FunctionDeclaration::Visibility visibility, llvm::Type *ret_type,
+    const std::vector<ArgumentInfo> &args)
+    : name_(name),
+      visibility_(visibility),
+      ret_type_(ret_type),
+      args_info_(args),
+      func_decl_(ConstructFunction(cc, name, visibility, ret_type, args)) {}
+
+FunctionDeclaration FunctionDeclaration::MakeDeclaration(
+    CodeContext &cc, const std::string &name,
+    FunctionDeclaration::Visibility visibility, llvm::Type *ret_type,
+    const std::vector<ArgumentInfo> &args) {
+  return FunctionDeclaration(cc, name, visibility, ret_type, args);
+}
+
+//===----------------------------------------------------------------------===//
+//
+// FunctionBuilder
+//
+//===----------------------------------------------------------------------===//
+
+// We preserve the state of any ongoing function construction in order to be
+// able to restore it after this function has been fully completed. Thus,
+// FunctionBuilders are nestable, allowing the definition of a function to begin
+// while in midst of defining another function.
+FunctionBuilder::FunctionBuilder(CodeContext &cc, llvm::Function *func_decl)
+    : finished_(false),
+      code_context_(cc),
+      previous_function_(cc.GetCurrentFunction()),
+      previous_insert_point_(cc.GetBuilder().GetInsertBlock()),
+      func_(func_decl),
+      overflow_bb_(nullptr),
+      divide_by_zero_bb_(nullptr) {
+  // At this point, we've saved the current position during code generation and
+  // we have a function declaration. Now:
+  //  1. We define the "entry" block and attach it to the function. At this
+  //     point, it transitions from being a declaration to a full definition.
+  //  2. We switch the insertion position into the entry block. The function is
+  //     being built after the constructor completes.
+  //  3. We register the function into the context.
 
   // Set the entry point of the function
   entry_bb_ =
@@ -59,10 +120,25 @@ FunctionBuilder::FunctionBuilder(
   code_context_.RegisterFunction(func_);
 }
 
-// When we destructing the FunctionBuilder, we just do a sanity check to ensure
-// that the user actually finished constructing the function. This is because we
-// do cleanup in Finish().
-FunctionBuilder::~FunctionBuilder() { PL_ASSERT(finished_); }
+FunctionBuilder::FunctionBuilder(CodeContext &cc,
+                                 const FunctionDeclaration &declaration)
+    : FunctionBuilder(cc, declaration.GetDeclaredFunction()) {}
+
+FunctionBuilder::FunctionBuilder(
+    CodeContext &cc, std::string name, llvm::Type *ret_type,
+    const std::vector<FunctionDeclaration::ArgumentInfo> &args)
+    : FunctionBuilder(
+          cc,
+          ConstructFunction(cc, name, FunctionDeclaration::Visibility::External,
+                            ret_type, args)) {}
+
+FunctionBuilder::~FunctionBuilder() {
+  if (!finished_) {
+    LOG_ERROR(
+        "Missing call to FunctionBuilder::ReturnAndFinish() for function '%s'",
+        func_->getName().data());
+  }
+}
 
 // Here, we just need to iterate over the arguments in the function to find a
 // match. The names of the arguments were provided and set at construction time.
@@ -72,12 +148,11 @@ llvm::Value *FunctionBuilder::GetArgumentByName(std::string name) {
       return &arg;
     }
   }
-  PL_ASSERT(false);
   return nullptr;
 }
 
 llvm::Value *FunctionBuilder::GetArgumentByPosition(uint32_t index) {
-  PL_ASSERT(index < func_->arg_size());
+  PELOTON_ASSERT(index < func_->arg_size());
   uint32_t pos = 0;
   for (auto arg_iter = func_->arg_begin(), end = func_->arg_end();
        arg_iter != end; ++arg_iter, ++pos) {
@@ -85,7 +160,6 @@ llvm::Value *FunctionBuilder::GetArgumentByPosition(uint32_t index) {
       return &*arg_iter;
     }
   }
-  PL_ASSERT(false);
   return nullptr;
 }
 
@@ -152,32 +226,57 @@ llvm::BasicBlock *FunctionBuilder::GetDivideByZeroBB() {
 
 // Return the given value from the function and finish it
 void FunctionBuilder::ReturnAndFinish(llvm::Value *ret) {
-  if (!finished_) {
-    if (ret != nullptr) {
-      code_context_.GetBuilder().CreateRet(ret);
+  if (finished_) {
+    return;
+  }
+
+  CodeGen codegen{code_context_};
+
+  if (ret != nullptr) {
+    codegen->CreateRet(ret);
+  } else {
+    PELOTON_ASSERT(func_->getReturnType()->isVoidTy());
+    codegen->CreateRetVoid();
+  }
+
+  // Add the overflow error block if it exists
+  if (overflow_bb_ != nullptr) {
+    overflow_bb_->insertInto(func_);
+  }
+
+  // Add the divide-by-zero error block if it exists
+  if (divide_by_zero_bb_ != nullptr) {
+    divide_by_zero_bb_->insertInto(func_);
+  }
+
+  // Restore previous function construction state in the code context
+  if (previous_insert_point_ != nullptr) {
+    PELOTON_ASSERT(previous_function_ != nullptr);
+    codegen->SetInsertPoint(previous_insert_point_);
+    code_context_.SetCurrentFunction(previous_function_);
+  }
+
+  // Now we're done
+  finished_ = true;
+}
+
+llvm::Value *FunctionBuilder::GetOrCacheVariable(
+    const std::string &name, const std::function<llvm::Value *()> &func) {
+  auto iter = cached_vars_.find(name);
+  if (iter != cached_vars_.end()) {
+    return iter->second;
+  } else {
+    CodeGen codegen{code_context_};
+    auto pos = codegen->GetInsertPoint();
+    if (entry_bb_->empty()) {
+      codegen->SetInsertPoint(entry_bb_);
     } else {
-      code_context_.GetBuilder().CreateRetVoid();
+      codegen->SetInsertPoint(&entry_bb_->back());
     }
-
-    // Add the overflow error block if it exists
-    if (overflow_bb_ != nullptr) {
-      overflow_bb_->insertInto(func_);
-    }
-
-    // Add the divide-by-zero error block if it exists
-    if (divide_by_zero_bb_ != nullptr) {
-      divide_by_zero_bb_->insertInto(func_);
-    }
-
-    // Restore previous function construction state in the code context
-    if (previous_insert_point_ != nullptr) {
-      PL_ASSERT(previous_function_ != nullptr);
-      code_context_.GetBuilder().SetInsertPoint(previous_insert_point_);
-      code_context_.SetCurrentFunction(previous_function_);
-    }
-
-    // Now we're done
-    finished_ = true;
+    auto *val = func();
+    codegen->SetInsertPoint(&*pos);
+    cached_vars_.emplace(name, val);
+    return val;
   }
 }
 

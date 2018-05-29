@@ -21,11 +21,31 @@ Another measure of the function is the number of local variables.  They shouldn'
 
 **PRINTF** Refrain from using `printf` and `std::cout`. Instead use the logging macros, such as LOG_LEVEL_INFO, in `common/logger.h`.
 
-**DON'T REINVENT THE MACROS** Use `PL_ASSERT` in `common/macros.h` instead of regular `assert`. This header file icontains a number of macros that you should use, rather than explicitly coding some variant of them yourself.
+**DON'T REINVENT THE MACROS** Use `PELOTON_ASSERT` in `common/macros.h` instead of regular `assert`. This header file icontains a number of macros that you should use, rather than explicitly coding some variant of them yourself.
 
 **PLAFORM-SPECIFIC CODE** Add platform-specific code only to `common/platform.h`.
 
-**THE INLINE DISEASE** Don't use `inline` unless you know what you are doing. A reasonable rule of thumb is to not put inline at functions that have more than 3 lines of code in them. Abundant use of the inline keyword leads to a much bigger binary, which in turn slows the system as a whole down, due to a bigger `icache footprint` for the CPU and simply because there is less memory available for the `buffer cache`. 
+**THE INLINE DISEASE** Don't use `inline` unless you know what you are doing.  Overuse use of `inline` can lead to larger binaries, can cause `I-cache` thrashing, and can negatively impact `D-cache` behaviour if the inlined function accesses large amounts of data and appears in a hot loop. The decision to inline is usually best left up to the compiler. The only reason you should use the `inline` function is to adhere to the `one-definition-rule`, i.e., if you want to have method definitions in the header file. For more details, see [here](https://isocpp.org/wiki/faq/inline-functions#where-to-put-inline-keyword)
+
+**INLINE MEMBER FUNCTIONS**
+While inline-defined member functions are convenient, they can obscure the publically visible interface of the class, thus making it difficult to use. By rule of thumb, member accessor definitions that are one line can appear within the class. All other definitions must exist outside the class body. Example:
+
+```c++
+class Foo {
+ public:  
+  // Inline definition okay
+  void GetBar() const { return bar_; }
+  
+  // Externally definition
+  void Bar2() const;
+};
+
+inline void Foo::Bar2() const {
+  ... implentation ...
+}
+```
+
+The example above illustrates a valid use of the `inline` keyword for the definition of `Foo::Bar2()`. For more details, see [here](https://isocpp.org/wiki/faq/inline-functions#where-to-put-inline-keyword)
 
 **CONDITIONAL COMPILATION** Wherever possible, don't use preprocessor conditionals (#if, #ifdef) in .cpp files; doing so makes code harder to read and logic harder to follow.  Instead, use such conditionals in a header file defining functions for use in those .cpp files, providing no-op stub versions in the #else case, and then call those functions unconditionally from .cpp files.  The compiler will avoid generating any code for the stub calls, producing identical results, but the logic will remain easy to follow.
 
@@ -33,7 +53,7 @@ Another measure of the function is the number of local variables.  They shouldn'
 
 **EDITOR MODELINES** Some editors can interpret configuration information embedded in source files, indicated with special markers.  For example, emacs interprets lines marked like this:	-*- mode: c -*-. Do NOT include any of these in source files. People have their own personal editor configurations, and your source files should not override them.
 
-**ALLOCATING MEMORY** Use `PL_MEMCPY` macro in `common/macros.h`. Always use smart pointers, such as `std::unique_ptr`, to simplify memory management.
+**ALLOCATING MEMORY** Use `PELOTON_MEMCPY` macro in `common/macros.h`. Always use smart pointers, such as `std::unique_ptr`, to simplify memory management.
 
 **PRINTING PELOTON MESSAGES** Peloton developers like to be seen as literate. Do mind the spelling of messages to make a good impression. Do not use crippled words like "dont"; use "do not" or "don't" instead.  Make the messages concise, clear, and unambiguous. Use appropriate log levels, such as LOG_LEVEL_TRACE, in `common/logger.h`. Coming up with good debugging messages can be quite a challenge; and once you have them, they can be a huge help for troubleshooting.
 

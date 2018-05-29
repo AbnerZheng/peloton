@@ -4,12 +4,11 @@
 //
 // rpc_channel.cpp
 //
-// Identification: src/network/rpc_channel.cpp
+// Identification: src/network/service/rpc_channel.cpp
 //
-// Copyright (c) 2015-16, Carnegie Mellon University Database Group
+// Copyright (c) 2015-2017, Carnegie Mellon University Database Group
 //
 //===----------------------------------------------------------------------===//
-
 
 #include "network/service/rpc_type.h"
 #include "network/service/rpc_client.h"
@@ -29,7 +28,7 @@ namespace peloton {
 namespace network {
 namespace service {
 
-RpcChannel::RpcChannel(const std::string& url) : addr_(url) {}
+RpcChannel::RpcChannel(const std::string &url) : addr_(url) {}
 
 RpcChannel::~RpcChannel() { Close(); }
 
@@ -47,12 +46,12 @@ RpcChannel::~RpcChannel() { Close(); }
  * request msg
  */
 void RpcChannel::CallMethod(
-    const google::protobuf::MethodDescriptor* method,
-    google::protobuf::RpcController* controller,
-    const google::protobuf::Message* request,
-    UNUSED_ATTRIBUTE google::protobuf::Message* response,
-    google::protobuf::Closure* done) {
-  PL_ASSERT(request != nullptr);
+    const google::protobuf::MethodDescriptor *method,
+    google::protobuf::RpcController *controller,
+    const google::protobuf::Message *request,
+    UNUSED_ATTRIBUTE google::protobuf::Message *response,
+    google::protobuf::Closure *done) {
+  PELOTON_ASSERT(request != nullptr);
   /*  run call back function */
   if (done != NULL) {
     done->Run();
@@ -74,19 +73,19 @@ void RpcChannel::CallMethod(
 
   /* total length of the message: header length (4bytes) + message length
    * (8bytes + ...) */
-  PL_ASSERT(HEADERLEN == sizeof(msg_len));
+  PELOTON_ASSERT(HEADERLEN == sizeof(msg_len));
   char buf[HEADERLEN + msg_len];
 
   /* copy the header into the buf */
-  PL_MEMCPY(buf, &msg_len, sizeof(msg_len));
+  PELOTON_MEMCPY(buf, &msg_len, sizeof(msg_len));
 
   /* copy the type into the buf, following the header */
-  PL_ASSERT(TYPELEN == sizeof(type));
-  PL_MEMCPY(buf + HEADERLEN, &type, TYPELEN);
+  PELOTON_ASSERT(TYPELEN == sizeof(type));
+  PELOTON_MEMCPY(buf + HEADERLEN, &type, TYPELEN);
 
   /*  copy the hashcode into the buf, following the type */
-  PL_ASSERT(OPCODELEN == sizeof(opcode));
-  PL_MEMCPY(buf + HEADERLEN + TYPELEN, &opcode, OPCODELEN);
+  PELOTON_ASSERT(OPCODELEN == sizeof(opcode));
+  PELOTON_MEMCPY(buf + HEADERLEN + TYPELEN, &opcode, OPCODELEN);
 
   /*  call protobuf to serialize the request message into sending buf */
   request->SerializeToArray(buf + HEADERLEN + TYPELEN + OPCODELEN,
@@ -98,7 +97,7 @@ void RpcChannel::CallMethod(
    * it will be returned. If not, a new connection will be created and connect
    * to server
    */
-  Connection* conn = ConnectionManager::GetInstance().CreateConn(
+  Connection *conn = ConnectionManager::GetInstance().CreateConn(
       addr_);  // CreateConn is used for self connect
   // Connection* conn = ConnectionManager::GetInstance().GetConnection(addr_);
 

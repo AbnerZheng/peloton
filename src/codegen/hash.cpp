@@ -40,7 +40,7 @@ llvm::Value *Hash::HashValues(CodeGen &codegen,
     llvm::Value *val = nullptr;
     llvm::Value *len = nullptr;
     value.ValuesForHash(val, len);
-    PL_ASSERT(val != nullptr);
+    PELOTON_ASSERT(val != nullptr);
 
     llvm::Type *val_type = val->getType();
 
@@ -156,7 +156,7 @@ llvm::Value *Hash::ComputeCRC32Hash(CodeGen &codegen,
   // Hash the numerics
   llvm::Function *crc32_func = llvm::Intrinsic::getDeclaration(
       &codegen.GetModule(), llvm::Intrinsic::x86_sse42_crc32_64_64);
-  PL_ASSERT(crc32_func != nullptr);
+  PELOTON_ASSERT(crc32_func != nullptr);
   for (auto *val : numerics) {
     crc_low = codegen.CallFunc(crc32_func, {crc_low, val});
     crc_high = codegen.CallFunc(crc32_func, {crc_high, val});
@@ -169,8 +169,8 @@ llvm::Value *Hash::ComputeCRC32Hash(CodeGen &codegen,
   // Now hash the strings
   for (auto &varlen : varlens) {
     llvm::Value *len = codegen->CreateZExt(varlen.len, codegen.Int64Type());
-    crc = codegen.Call(RuntimeFunctionsProxy::HashCrc64,
-                       {varlen.val, len, crc});
+    crc =
+        codegen.Call(RuntimeFunctionsProxy::HashCrc64, {varlen.val, len, crc});
   }
 
   ///
@@ -181,7 +181,7 @@ llvm::Value *Hash::ComputeCRC32Hash(CodeGen &codegen,
 // single value
 llvm::Value *Hash::ComputeMurmur3Hash(
     CodeGen &codegen, const std::vector<llvm::Value *> &numerics,
-    const std::vector<Hash::Varlen> &varlen_buffers) {
+    const std::vector<Hash::Varlen> &varlens) {
   // The magic constants used in Murmur3's final 64-bit avalanche mix
   static constexpr uint64_t kMurmur3C1 = 0xff51afd7ed558ccdLLU;
   static constexpr uint64_t kMurmur3C2 = 0xc4ceb9fe1a85ec53LLU;
@@ -223,8 +223,16 @@ llvm::Value *Hash::ComputeMurmur3Hash(
     }
   }
 
-  if (!varlen_buffers.empty()) {
-    throw Exception{"Cannot perform a vectorized Murmur3 hash on strings"};
+  if (hash == nullptr) {
+    // No numerics in the hash
+    hash = codegen.Const64(0);
+  }
+
+  // Now hash the strings
+  for (auto &varlen : varlens) {
+    llvm::Value *len = codegen->CreateZExt(varlen.len, codegen.Int64Type());
+    std::vector<llvm::Value *> args = {varlen.val, len, hash};
+    hash = codegen.Call(RuntimeFunctionsProxy::HashMurmur3, args);
   }
 
   return hash;

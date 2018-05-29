@@ -16,18 +16,24 @@
 #include <stack>
 #include <vector>
 
+// Libevent 2.0
+#include "event.h"
+
+#include "catalog/column.h"
+#include "common/internal_types.h"
 #include "common/portal.h"
 #include "common/statement.h"
-#include "concurrency/transaction_context.h"
 #include "executor/plan_executor.h"
 #include "optimizer/abstract_optimizer.h"
 #include "parser/sql_statement.h"
-#include "storage/data_table.h"
 #include "type/type.h"
-#include "type/types.h"
-#include "event.h"
 
 namespace peloton {
+
+namespace concurrency {
+class TransactionContext;
+}  // namespace concurrency
+
 namespace tcop {
 
 //===--------------------------------------------------------------------===//
@@ -58,13 +64,13 @@ class TrafficCop {
   // Reset this object.
   void Reset();
 
-  // Execute a statement from a prepared and bound statement.
+  // Execute a statement
   ResultType ExecuteStatement(
       const std::shared_ptr<Statement> &statement,
-      const std::vector<type::Value> &params, bool unnamed,
+      const std::vector<type::Value> &params, const bool unnamed,
       std::shared_ptr<stats::QueryMetric::QueryParams> param_stats,
       const std::vector<int> &result_format, std::vector<ResultValue> &result,
-      std::string &error_message, size_t thread_id = 0);
+      size_t thread_id = 0);
 
   // Helper to handle txn-specifics for the plan-tree of a statement.
   executor::ExecutionResult ExecuteHelper(
@@ -72,11 +78,15 @@ class TrafficCop {
       const std::vector<type::Value> &params, std::vector<ResultValue> &result,
       const std::vector<int> &result_format, size_t thread_id = 0);
 
-  // Prepare and bind a query from a query string
-  std::shared_ptr<Statement> PrepareStatement(const std::string &statement_name,
-                                              const std::string &query_string,
-                                              std::string &error_message,
-                                              size_t thread_id = 0);
+  // Prepare a statement using the parse tree
+  std::shared_ptr<Statement> PrepareStatement(
+      const std::string &statement_name, const std::string &query_string,
+      std::unique_ptr<parser::SQLStatementList> sql_stmt_list,
+      size_t thread_id = 0);
+
+  bool BindParamsForCachePlan(
+      const std::vector<std::unique_ptr<expression::AbstractExpression>> &,
+      const size_t thread_id = 0);
 
   std::vector<FieldInfo> GenerateTupleDescriptor(
       parser::SQLStatement *select_stmt);
@@ -101,6 +111,8 @@ class TrafficCop {
 
   void setRowsAffected(int rows_affected) { rows_affected_ = rows_affected; }
 
+  void ProcessInvalidStatement();
+
   int getRowsAffected() { return rows_affected_; }
 
   void SetStatement(std::shared_ptr<Statement> statement) {
@@ -120,10 +132,6 @@ class TrafficCop {
   }
 
   std::vector<type::Value> &GetParamVal() { return param_values_; }
-
-  void SetErrorMessage(std::string error_message) {
-    error_message_ = std::move(error_message);
-  }
 
   std::string &GetErrorMessage() { return error_message_; }
 
@@ -162,7 +170,7 @@ class TrafficCop {
   std::unique_ptr<optimizer::AbstractOptimizer> optimizer_;
 
   // flag of single statement txn
-  bool is_single_statement_txn_;
+  bool single_statement_txn_;
 
   std::vector<ResultValue> result_;
 
@@ -186,8 +194,8 @@ class TrafficCop {
   // Get all data tables from a TableRef.
   // For multi-way join
   // still a HACK
-  void GetDataTables(parser::TableRef *from_table,
-                     std::vector<storage::DataTable *> &target_tables);
+  void GetTableColumns(parser::TableRef *from_table,
+                       std::vector<catalog::Column> &target_tables);
 };
 
 }  // namespace tcop

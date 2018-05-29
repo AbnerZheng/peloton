@@ -6,11 +6,13 @@
 //
 // Identification: src/codegen/updateable_storage.cpp
 //
-// Copyright (c) 2015-2017, Carnegie Mellon University Database Group
+// Copyright (c) 2015-2018, Carnegie Mellon University Database Group
 //
 //===----------------------------------------------------------------------===//
 
 #include "codegen/updateable_storage.h"
+
+#include <algorithm>
 
 #include "codegen/lang/if.h"
 #include "codegen/type/sql_type.h"
@@ -23,7 +25,7 @@ namespace codegen {
 // can be found it (i.e., which index to pass into Get() to get the value)
 //===----------------------------------------------------------------------===//
 uint32_t UpdateableStorage::AddType(const type::Type &type) {
-  PL_ASSERT(storage_type_ == nullptr);
+  PELOTON_ASSERT(storage_type_ == nullptr);
   schema_.push_back(type);
   return static_cast<uint32_t>(schema_.size() - 1);
 }
@@ -45,39 +47,44 @@ llvm::Type *UpdateableStorage::Finalize(CodeGen &codegen) {
     // Create a slot metadata entry for the value
     // Note: The physical and logical index are the same for now. The physical
     //       index is modified after storage format optimization (later).
-    storage_format_.push_back(CompactStorage::EntryInfo{
-        val_type, i, i, false, codegen.SizeOf(val_type)});
+    storage_format_.emplace_back(
+        CompactStorage::EntryInfo{.type = val_type,
+                                  .physical_index = i,
+                                  .logical_index = i,
+                                  .is_length = false,
+                                  .num_bytes = codegen.SizeOf(val_type)});
 
     // If there is a length component, add that too
     if (len_type != nullptr) {
-      storage_format_.push_back(CompactStorage::EntryInfo{
-          len_type, i, i, true, codegen.SizeOf(len_type)});
+      storage_format_.emplace_back(
+          CompactStorage::EntryInfo{.type = len_type,
+                                    .physical_index = i,
+                                    .logical_index = i,
+                                    .is_length = true,
+                                    .num_bytes = codegen.SizeOf(len_type)});
     }
   }
 
-  // Sort the entries by decreasing size. This minimizes storage overhead due to
-  // padding (potentially) added by LLVM.
-  // TODO: Does this help?
+  // Sort the entries by decreasing size
   std::sort(storage_format_.begin(), storage_format_.end(),
             [](const CompactStorage::EntryInfo &left,
                const CompactStorage::EntryInfo &right) {
               return right.num_bytes < left.num_bytes;
             });
 
-  // Now we construct the LLVM type of this storage space. First comes bytes
-  // to manage the null bitmap. Then all the data elements.
+  // Now we construct the LLVM type of this storage space
   std::vector<llvm::Type *> llvm_types;
-
-  uint32_t num_null_bytes = static_cast<uint32_t>((schema_.size() + 7) >> 3);
-  for (uint32_t i = 0; i < num_null_bytes; i++) {
-    llvm_types.push_back(codegen.Int8Type());
-  }
-
   for (uint32_t i = 0; i < storage_format_.size(); i++) {
     llvm_types.push_back(storage_format_[i].type);
+    storage_format_[i].physical_index = i;
+  }
 
-    // Update the physical index in the storage entry
-    storage_format_[i].physical_index = num_null_bytes + i;
+  // If we need a null-bitmap, add it at the end
+  auto num_null_bytes = static_cast<uint32_t>((schema_.size() + 7) >> 3);
+  if (num_null_bytes > 0) {
+    null_bitmap_pos_ = static_cast<uint32_t>(llvm_types.size());
+    null_bitmap_type_ = codegen.ArrayType(codegen.ByteType(), num_null_bytes);
+    llvm_types.push_back(null_bitmap_type_);
   }
 
   // Construct the finalized types
@@ -96,23 +103,23 @@ void UpdateableStorage::FindStoragePositionFor(uint32_t item_index,
   for (const auto &entry_info : storage_format_) {
     if (entry_info.logical_index == item_index) {
       if (entry_info.is_length) {
-        PL_ASSERT(len_idx == -1);
+        PELOTON_ASSERT(len_idx == -1);
         len_idx = entry_info.physical_index;
       } else {
-        PL_ASSERT(val_idx == -1);
+        PELOTON_ASSERT(val_idx == -1);
         val_idx = entry_info.physical_index;
       }
     }
   }
-  PL_ASSERT(val_idx >= 0);
+  PELOTON_ASSERT(val_idx >= 0);
 }
 
 // Get the value at a specific index into the storage area
 codegen::Value UpdateableStorage::GetValueSkipNull(CodeGen &codegen,
                                                    llvm::Value *space,
                                                    uint64_t index) const {
-  PL_ASSERT(storage_type_ != nullptr);
-  PL_ASSERT(index < schema_.size());
+  PELOTON_ASSERT(storage_type_ != nullptr);
+  PELOTON_ASSERT(index < schema_.size());
 
   // Get the physical position in the storage space where the data is located
   int32_t val_idx, len_idx;
@@ -142,6 +149,11 @@ codegen::Value UpdateableStorage::GetValueSkipNull(CodeGen &codegen,
 codegen::Value UpdateableStorage::GetValue(
     CodeGen &codegen, llvm::Value *space, uint64_t index,
     UpdateableStorage::NullBitmap &null_bitmap) const {
+  // If the index isn't NULL-able, skip the check
+  if (!null_bitmap.IsNullable(index)) {
+    return GetValueSkipNull(codegen, space, index);
+  }
+
   codegen::Value null_val, read_val;
 
   lang::If val_is_null{codegen, null_bitmap.IsNull(codegen, index)};
@@ -192,7 +204,13 @@ void UpdateableStorage::SetValue(
     CodeGen &codegen, llvm::Value *space, uint64_t index,
     const codegen::Value &value,
     UpdateableStorage::NullBitmap &null_bitmap) const {
-  PL_ASSERT(null_bitmap.IsNullable(index));
+  // If the index isn't NULL-able, skip storing the NULL bit
+  if (!null_bitmap.IsNullable(index)) {
+    SetValueSkipNull(codegen, space, index, value);
+    return;
+  }
+
+  PELOTON_ASSERT(null_bitmap.IsNullable(index));
 
   // Set the NULL bit
   llvm::Value *null = value.IsNull(codegen);
@@ -206,17 +224,29 @@ void UpdateableStorage::SetValue(
   val_not_null.EndIf();
 }
 
-//===----------------------------------------------------------------------===//
-// NULL BITMAP
-//===----------------------------------------------------------------------===//
+////////////////////////////////////////////////////////////////////////////////
+///
+/// Null Bitmap
+///
+////////////////////////////////////////////////////////////////////////////////
 
 UpdateableStorage::NullBitmap::NullBitmap(CodeGen &codegen,
                                           const UpdateableStorage &storage,
-                                          llvm::Value *bitmap_ptr)
-    : storage_(storage), bitmap_ptr_(bitmap_ptr) {
-  if (bitmap_ptr_->getType() != codegen.CharPtrType()) {
-    bitmap_ptr_ =
-        codegen->CreateBitOrPointerCast(bitmap_ptr_, codegen.CharPtrType());
+                                          llvm::Value *storage_ptr)
+    : storage_(storage), bitmap_ptr_(storage_ptr) {
+  auto *storage_type = storage.GetStorageType();
+  if (storage.GetNullBitmapType() != nullptr) {
+    // Cast the pointer to the constructed storage type
+    auto *typed_ptr = codegen->CreateBitOrPointerCast(
+        storage_ptr, storage_type->getPointerTo());
+
+    // Get the pointer to the bitmap array
+    auto *bitmap_arr = codegen->CreateConstInBoundsGEP2_32(
+        storage_type, typed_ptr, 0, storage.null_bitmap_pos_);
+
+    // Index into the first element, treating it as a char *
+    bitmap_ptr_ = codegen->CreateConstInBoundsGEP2_32(
+        storage.GetNullBitmapType(), bitmap_arr, 0, 0);
   }
   uint32_t num_bytes = (storage_.GetNumElements() + 7) >> 3;
   bytes_.resize(num_bytes, nullptr);
@@ -258,7 +288,7 @@ llvm::Value *UpdateableStorage::NullBitmap::IsNull(CodeGen &codegen,
 
 void UpdateableStorage::NullBitmap::SetNull(CodeGen &codegen, uint32_t index,
                                             llvm::Value *null_bit) {
-  PL_ASSERT(null_bit->getType() == codegen.BoolType());
+  PELOTON_ASSERT(null_bit->getType() == codegen.BoolType());
 
   uint32_t byte_pos = index >> 3;
 
@@ -268,13 +298,10 @@ void UpdateableStorage::NullBitmap::SetNull(CodeGen &codegen, uint32_t index,
   llvm::Value *mask = codegen.Const8(1 << (index & 7));
 
   // If we know the bit is a compile-time constant, generate specialized code
-  if (llvm::ConstantInt *const_int =
-          llvm::dyn_cast<llvm::ConstantInt>(null_bit)) {
+  if (auto *const_int = llvm::dyn_cast<llvm::ConstantInt>(null_bit)) {
     if (const_int->isOne()) {
-      // Set the bit to 1
       bytes_[byte_pos] = codegen->CreateOr(byte_val, mask);
     } else {
-      // Set the bit to 0
       bytes_[byte_pos] = codegen->CreateAnd(byte_val, codegen->CreateNot(mask));
     }
   } else {
@@ -293,7 +320,7 @@ void UpdateableStorage::NullBitmap::SetNull(CodeGen &codegen, uint32_t index,
 
 void UpdateableStorage::NullBitmap::MergeValues(lang::If &if_clause,
                                                 llvm::Value *before_if_value) {
-  PL_ASSERT(bytes_[active_byte_pos_] != nullptr);
+  PELOTON_ASSERT(bytes_[active_byte_pos_] != nullptr);
   bytes_[active_byte_pos_] =
       if_clause.BuildPHI(bytes_[active_byte_pos_], before_if_value);
 }

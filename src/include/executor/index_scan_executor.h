@@ -29,6 +29,11 @@ class AbstractTable;
 
 namespace executor {
 
+/**
+ * 2018-01-07: This is <b>deprecated</b>. Do not modify these classes.
+ * The old interpreted engine will be removed.
+ * @deprecated
+ */
 class IndexScanExecutor : public AbstractScanExecutor {
   IndexScanExecutor(const IndexScanExecutor &) = delete;
   IndexScanExecutor &operator=(const IndexScanExecutor &) = delete;
@@ -88,7 +93,7 @@ class IndexScanExecutor : public AbstractScanExecutor {
   std::shared_ptr<index::Index> index_;
 
   // the underlying table that the index is for
-  const storage::AbstractTable *table_ = nullptr;
+  storage::DataTable *table_ = nullptr;
 
   // columns to be returned as results
   std::vector<oid_t> column_ids_;

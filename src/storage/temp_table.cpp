@@ -38,10 +38,10 @@ TempTable::~TempTable() {
 
 ItemPointer TempTable::InsertTuple(
     const Tuple *tuple, UNUSED_ATTRIBUTE concurrency::TransactionContext *transaction,
-    UNUSED_ATTRIBUTE ItemPointer **index_entry_ptr) {
-  PL_ASSERT(tuple != nullptr);
-  PL_ASSERT(transaction == nullptr);
-  PL_ASSERT(index_entry_ptr == nullptr);
+    UNUSED_ATTRIBUTE ItemPointer **index_entry_ptr, UNUSED_ATTRIBUTE bool check_fk) {
+  PELOTON_ASSERT(tuple != nullptr);
+  PELOTON_ASSERT(transaction == nullptr);
+  PELOTON_ASSERT(index_entry_ptr == nullptr);
 
   std::shared_ptr<storage::TileGroup> tile_group;
   oid_t tuple_slot = INVALID_OID;
@@ -80,13 +80,14 @@ ItemPointer TempTable::InsertTuple(
 
   return (location);
 }
+
 ItemPointer TempTable::InsertTuple(const Tuple *tuple) {
   return (this->InsertTuple(tuple, nullptr, nullptr));
 }
 
 std::shared_ptr<storage::TileGroup> TempTable::GetTileGroup(
     const std::size_t &tile_group_offset) const {
-  PL_ASSERT(tile_group_offset < GetTileGroupCount());
+  PELOTON_ASSERT(tile_group_offset < GetTileGroupCount());
   return (tile_groups_[tile_group_offset]);
 }
 
@@ -103,8 +104,6 @@ std::shared_ptr<storage::TileGroup> TempTable::GetTileGroupById(
 }
 
 oid_t TempTable::AddDefaultTileGroup() {
-  column_map_type column_map;
-
   // Well, a TempTable doesn't really care about TileGroupIds
   // And nobody else in the system should be referencing our boys directly,
   // so we're just going to use a simple counter for these ids
@@ -113,15 +112,12 @@ oid_t TempTable::AddDefaultTileGroup() {
   oid_t tile_group_id =
       TEMPTABLE_TILEGROUP_ID + static_cast<int>(tile_groups_.size());
 
-  // Figure out the partitioning for given tilegroup layout
-  column_map =
-      AbstractTable::GetTileGroupLayout();
-
   // Create a tile group with that partitioning
+  // Its a TempTable, so we don't need to make the Layout persistent
   std::shared_ptr<storage::TileGroup> tile_group(
       AbstractTable::GetTileGroupWithLayout(
-          INVALID_OID, tile_group_id, column_map, TEMPTABLE_DEFAULT_SIZE));
-  PL_ASSERT(tile_group.get());
+          INVALID_OID, tile_group_id, default_layout_, TEMPTABLE_DEFAULT_SIZE));
+  PELOTON_ASSERT(tile_group.get());
 
   tile_groups_.push_back(tile_group);
 

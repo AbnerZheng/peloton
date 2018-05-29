@@ -15,13 +15,13 @@
 #include <sstream>
 
 #include "common/logger.h"
-#include "common/platform.h"
 #include "common/macros.h"
+#include "common/platform.h"
 #include "trigger/trigger.h"
 
 #include <chrono>
-#include <thread>
 #include <iomanip>
+#include <thread>
 
 namespace peloton {
 namespace concurrency {
@@ -49,22 +49,23 @@ namespace concurrency {
  */
 
 TransactionContext::TransactionContext(const size_t thread_id,
-                         const IsolationLevelType isolation,
-                         const cid_t &read_id) {
+                                       const IsolationLevelType isolation,
+                                       const cid_t &read_id) {
   Init(thread_id, isolation, read_id);
 }
 
 TransactionContext::TransactionContext(const size_t thread_id,
-                         const IsolationLevelType isolation,
-                         const cid_t &read_id, const cid_t &commit_id) {
+                                       const IsolationLevelType isolation,
+                                       const cid_t &read_id,
+                                       const cid_t &commit_id) {
   Init(thread_id, isolation, read_id, commit_id);
 }
 
 TransactionContext::~TransactionContext() {}
 
 void TransactionContext::Init(const size_t thread_id,
-                       const IsolationLevelType isolation, const cid_t &read_id,
-                       const cid_t &commit_id) {
+                              const IsolationLevelType isolation,
+                              const cid_t &read_id, const cid_t &commit_id) {
   read_id_ = read_id;
 
   // commit id can be set at a transaction's commit phase.
@@ -90,126 +91,92 @@ void TransactionContext::Init(const size_t thread_id,
 }
 
 RWType TransactionContext::GetRWType(const ItemPointer &location) {
-  oid_t tile_group_id = location.block;
-  oid_t tuple_id = location.offset;
-  auto itr = rw_set_.find(tile_group_id);
-  if (itr == rw_set_.end()) {
-    return RWType::INVALID;
-  }
+  RWType rw_type = RWType::INVALID;
 
-  auto inner_itr = itr->second.find(tuple_id);
-  if (inner_itr == itr->second.end()) {
-    return RWType::INVALID;
+  auto rw_set_it = rw_set_.find(location);
+  if (rw_set_it != rw_set_.end()) {
+    return rw_set_it->second;
   }
-
-  return inner_itr->second;
+  return rw_type;
 }
 
 void TransactionContext::RecordRead(const ItemPointer &location) {
-  oid_t tile_group_id = location.block;
-  oid_t tuple_id = location.offset;
 
-  if (IsInRWSet(location)) {
-    PL_ASSERT(rw_set_.at(tile_group_id).at(tuple_id) != RWType::DELETE &&
-              rw_set_.at(tile_group_id).at(tuple_id) != RWType::INS_DEL);
+  auto rw_set_it = rw_set_.find(location);
+  if (rw_set_it != rw_set_.end()) {
+    UNUSED_ATTRIBUTE RWType rw_type = rw_set_it->second;
+    PELOTON_ASSERT(rw_type != RWType::DELETE && rw_type != RWType::INS_DEL);
     return;
-  } else {
-    rw_set_[tile_group_id][tuple_id] = RWType::READ;
   }
+  rw_set_.insert(rw_set_it, std::make_pair(location, RWType::READ));
 }
 
 void TransactionContext::RecordReadOwn(const ItemPointer &location) {
-  oid_t tile_group_id = location.block;
-  oid_t tuple_id = location.offset;
-
-  if (IsInRWSet(location)) {
-    RWType &type = rw_set_.at(tile_group_id).at(tuple_id);
-    if (type == RWType::READ) {
-      type = RWType::READ_OWN;
-      // record write.
-      return;
+  auto rw_set_it = rw_set_.find(location);
+  if (rw_set_it != rw_set_.end()) {
+    RWType rw_type = rw_set_it->second;
+    PELOTON_ASSERT(rw_type != RWType::DELETE && rw_type != RWType::INS_DEL);
+    if (rw_type == RWType::READ) {
+      rw_set_it->second = RWType::READ_OWN;
     }
-    PL_ASSERT(type != RWType::DELETE && type != RWType::INS_DEL);
   } else {
-    rw_set_[tile_group_id][tuple_id] = RWType::READ_OWN;
+    rw_set_.insert(rw_set_it, std::make_pair(location, RWType::READ_OWN));
   }
 }
 
 void TransactionContext::RecordUpdate(const ItemPointer &location) {
-  oid_t tile_group_id = location.block;
-  oid_t tuple_id = location.offset;
-
-  if (IsInRWSet(location)) {
-    RWType &type = rw_set_.at(tile_group_id).at(tuple_id);
-    if (type == RWType::READ || type == RWType::READ_OWN) {
-      type = RWType::UPDATE;
-      // record write.
+  auto rw_set_it = rw_set_.find(location);
+  if (rw_set_it != rw_set_.end()) {
+    RWType rw_type = rw_set_it->second;
+    if (rw_type == RWType::READ || rw_type == RWType::READ_OWN) {
       is_written_ = true;
-
+      rw_set_it->second = RWType::UPDATE;
+    } else if (rw_type == RWType::UPDATE || rw_type == RWType::INSERT) {
       return;
+    } else {
+      // DELETE or INS_DELETE
+      PELOTON_ASSERT(false);
     }
-    if (type == RWType::UPDATE) {
-      return;
-    }
-    if (type == RWType::INSERT) {
-      return;
-    }
-    if (type == RWType::DELETE) {
-      PL_ASSERT(false);
-      return;
-    }
-    PL_ASSERT(false);
   } else {
-    // consider select_for_udpate case.
-    rw_set_[tile_group_id][tuple_id] = RWType::UPDATE;
+    rw_set_.insert(rw_set_it, std::make_pair(location, RWType::UPDATE));
   }
 }
 
 void TransactionContext::RecordInsert(const ItemPointer &location) {
-  oid_t tile_group_id = location.block;
-  oid_t tuple_id = location.offset;
-
-  if (IsInRWSet(location)) {
-    PL_ASSERT(false);
-  } else {
-    rw_set_[tile_group_id][tuple_id] = RWType::INSERT;
-    ++insert_count_;
+  auto rw_set_it = rw_set_.find(location);
+  if (rw_set_it != rw_set_.end()) {
+    PELOTON_ASSERT(false);
+    return;
   }
+  rw_set_.insert(rw_set_it, std::make_pair(location, RWType::INSERT));
+  ++insert_count_;
 }
 
 bool TransactionContext::RecordDelete(const ItemPointer &location) {
-  oid_t tile_group_id = location.block;
-  oid_t tuple_id = location.offset;
+  auto rw_set_it = rw_set_.find(location);
+  if (rw_set_it != rw_set_.end()) {
+    RWType rw_type = rw_set_it->second;
 
-  if (IsInRWSet(location)) {
-    RWType &type = rw_set_.at(tile_group_id).at(tuple_id);
-    if (type == RWType::READ || type == RWType::READ_OWN) {
-      type = RWType::DELETE;
-      // record write.
+    if (rw_type == RWType::READ || rw_type == RWType::READ_OWN) {
+      rw_set_it->second = RWType::DELETE;
       is_written_ = true;
-
       return false;
-    }
-    if (type == RWType::UPDATE) {
-      type = RWType::DELETE;
-
+    } else if (rw_type == RWType::UPDATE) {
+      rw_set_it->second = RWType::DELETE;
       return false;
-    }
-    if (type == RWType::INSERT) {
-      type = RWType::INS_DEL;
+    } else if (rw_type == RWType::INSERT) {
+      rw_set_it->second = RWType::INS_DEL;
       --insert_count_;
-
       return true;
-    }
-    if (type == RWType::DELETE) {
-      PL_ASSERT(false);
+    } else {
+      // DELETE and INS_DEL
+      PELOTON_ASSERT(false);
       return false;
     }
-    PL_ASSERT(false);
   } else {
-    rw_set_[tile_group_id][tuple_id] = RWType::DELETE;
+    rw_set_.insert(rw_set_it, std::make_pair(location, RWType::DELETE));
+    return false;
   }
-  return false;
 }
 
 const std::string TransactionContext::GetInfo() const {
@@ -223,7 +190,8 @@ const std::string TransactionContext::GetInfo() const {
   return os.str();
 }
 
-void TransactionContext::AddOnCommitTrigger(trigger::TriggerData &trigger_data) {
+void TransactionContext::AddOnCommitTrigger(
+    trigger::TriggerData &trigger_data) {
   if (on_commit_triggers_ == nullptr) {
     on_commit_triggers_.reset(new trigger::TriggerSet());
   }

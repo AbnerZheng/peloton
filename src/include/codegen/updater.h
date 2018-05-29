@@ -13,14 +13,17 @@
 #pragma once
 
 #include "common/item_pointer.h"
-#include "executor/executor_context.h"
-#include "type/types.h"
+#include "common/internal_types.h"
 
 namespace peloton {
 
 namespace concurrency {
 class TransactionContext;
 }  // namespace concurrency
+
+namespace executor {
+class ExecutorContext;
+}  // namespace executor
 
 namespace storage {
 class DataTable;
@@ -67,6 +70,17 @@ class Updater {
 
   char *GetDataPtr(uint32_t tile_group_id, uint32_t tuple_offset);
 
+  // Check if the tuple is in the statement write set
+  inline bool IsInStatementWriteSet(ItemPointer location) {
+    return statement_write_set_->find(location) !=
+           statement_write_set_->end();
+  }
+
+  // Add the updated location to the statement write set
+  inline void AddToStatementWriteSet(ItemPointer& location) {
+    statement_write_set_->insert(location);
+  }
+
  private:
   // Table and executor context from the update translator
   storage::DataTable *table_;
@@ -74,6 +88,15 @@ class Updater {
 
   // Target list and direct map list pointer from the update translator
   TargetList *target_list_;
+
+  // Write set for tracking newly created tuples inserted by the same statement
+  // This statement-level write set is essential for avoiding the Halloween Problem,
+  // which refers to the phenomenon that an update operation causes a change to
+  // a tuple, potentially allowing this tuple to be visited more than once during
+  // the same operation.
+  // By maintaining the statement-level write set, an update operation will check 
+  // whether the to-be-updated tuple is created by the same operation.
+  WriteSet *statement_write_set_;
 
   // Ownership information
   bool is_owner_;
