@@ -556,6 +556,7 @@ enum class PlanNodeType {
   // Scan Nodes
   SEQSCAN = 10,
   INDEXSCAN = 11,
+  CSVSCAN = 12,
 
   // Join Nodes
   NESTLOOP = 20,
@@ -594,7 +595,7 @@ enum class PlanNodeType {
 
   // Utility
   RESULT = 70,
-  COPY = 71,
+  EXPORT_EXTERNAL_FILE = 71,
   CREATE_FUNC = 72,
 
   // Test
@@ -817,6 +818,13 @@ std::string CopyTypeToString(CopyType type);
 CopyType StringToCopyType(const std::string &str);
 std::ostream &operator<<(std::ostream &os, const CopyType &type);
 
+enum class ExternalFileFormat {
+  CSV,
+};
+std::string ExternalFileFormatToString(ExternalFileFormat format);
+ExternalFileFormat StringToExternalFileFormat(const std::string &str);
+std::ostream &operator<<(std::ostream &os, const ExternalFileFormat &format);
+
 //===--------------------------------------------------------------------===//
 // Payload Types
 //===--------------------------------------------------------------------===//
@@ -884,26 +892,27 @@ enum class PostgresConstraintType {
 
 enum class ConstraintType {
   INVALID = INVALID_TYPE_ID,  // invalid
-  NOT_NULL = 1,               // notnull
-  NOTNULL = 2,                // notnull
-  DEFAULT = 3,                // default
-  CHECK = 4,                  // check
-  PRIMARY = 5,                // primary key
-  UNIQUE = 6,                 // unique
-  FOREIGN = 7,                // foreign key
-  EXCLUSION = 8               // foreign key
+  CHECK = 1,                  // check
+  PRIMARY = 2,                // primary key
+  UNIQUE = 3,                 // unique
+  FOREIGN = 4,                // foreign key
+  EXCLUSION = 5               // foreign key
 };
 std::string ConstraintTypeToString(ConstraintType type);
 ConstraintType StringToConstraintType(const std::string &str);
 std::ostream &operator<<(std::ostream &os, const ConstraintType &type);
 
 enum class FKConstrActionType {
-  NOACTION = 0,
-  RESTRICT = 1,
-  CASCADE = 2,
-  SETNULL = 3,
-  SETDEFAULT = 4
+  INVALID = INVALID_TYPE_ID,  // invalid
+  NOACTION = 1,
+  RESTRICT = 2,
+  CASCADE = 3,
+  SETNULL = 4,
+  SETDEFAULT = 5
 };
+std::string FKConstrActionTypeToString(FKConstrActionType type);
+FKConstrActionType StringToFKConstrActionType(const std::string &str);
+std::ostream &operator<<(std::ostream &os, const FKConstrActionType &type);
 
 enum class FKConstrMatchType { SIMPLE = 0, PARTIAL = 1, FULL = 2 };
 
@@ -1336,6 +1345,7 @@ enum class RuleType : uint32_t {
   GET_TO_SEQ_SCAN,
   GET_TO_INDEX_SCAN,
   QUERY_DERIVED_GET_TO_PHYSICAL,
+  EXTERNAL_FILE_GET_TO_PHYSICAL,
   DELETE_TO_PHYSICAL,
   UPDATE_TO_PHYSICAL,
   INSERT_TO_PHYSICAL,
@@ -1346,6 +1356,7 @@ enum class RuleType : uint32_t {
   INNER_JOIN_TO_HASH_JOIN,
   IMPLEMENT_DISTINCT,
   IMPLEMENT_LIMIT,
+  EXPORT_EXTERNAL_FILE_TO_PHYSICAL,
 
   // Don't move this one
   RewriteDelimiter,

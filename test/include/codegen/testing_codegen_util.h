@@ -6,7 +6,7 @@
 //
 // Identification: test/include/codegen/testing_codegen_util.h
 //
-// Copyright (c) 2015-17, Carnegie Mellon University Database Group
+// Copyright (c) 2015-2018, Carnegie Mellon University Database Group
 //
 //===----------------------------------------------------------------------===//
 
@@ -20,8 +20,8 @@
 #include "codegen/execution_consumer.h"
 #include "codegen/value.h"
 #include "common/container_tuple.h"
-#include "expression/constant_value_expression.h"
 #include "expression/comparison_expression.h"
+#include "expression/constant_value_expression.h"
 #include "expression/tuple_value_expression.h"
 #include "planner/binding_context.h"
 #include "storage/data_table.h"
@@ -40,11 +40,24 @@ using ConstExpressionPtr =
 using PlanPtr = std::unique_ptr<planner::AbstractPlan>;
 using ConstPlanPtr = std::unique_ptr<const planner::AbstractPlan>;
 
-//===----------------------------------------------------------------------===//
-// Common base class for all codegen tests. This class four test tables that all
-// the codegen components use. Their ID's are available through the oid_t
-// enumeration.
-//===----------------------------------------------------------------------===//
+/**
+ * This is a scoped file handle that automatically deletes/removes the file
+ * with the given name when the class goes out of scope and the destructor is
+ * called.
+ */
+struct TempFileHandle {
+  std::string name;
+  TempFileHandle(std::string _name);
+  ~TempFileHandle();
+};
+
+/**
+ * Common base class for all codegen tests. This class has four test tables
+ * whose IDs and names are stored in test_table_oids and test_table_names,
+ * respectively. The test tables all have the exact schema: column "a" and "b"
+ * are integers, column "c" is a decimal, and column "d" is a varchar. The table
+ * with the highest OID also has a primary key on column "a".
+ */
 class PelotonCodeGenTest : public PelotonTest {
  public:
   std::string test_db_name = "peloton_codegen";
@@ -54,6 +67,11 @@ class PelotonCodeGenTest : public PelotonTest {
 
   PelotonCodeGenTest(oid_t tuples_per_tilegroup = DEFAULT_TUPLES_PER_TILEGROUP,
                      peloton::LayoutType layout_type = LayoutType::ROW);
+
+  struct CodeGenStats {
+    codegen::QueryCompiler::CompileStats compile_stats;
+    codegen::Query::RuntimeStats runtime_stats;
+  };
 
   virtual ~PelotonCodeGenTest();
 
@@ -71,8 +89,7 @@ class PelotonCodeGenTest : public PelotonTest {
   // Create the schema (common among all tables)
   catalog::Column GetTestColumn(uint32_t col_id) const;
 
-  std::unique_ptr<catalog::Schema> CreateTestSchema(
-      bool add_primary = false) const;
+  std::unique_ptr<catalog::Schema> CreateTestSchema() const;
 
   // Create the test tables
   void CreateTestTables(concurrency::TransactionContext *txn,
@@ -90,10 +107,10 @@ class PelotonCodeGenTest : public PelotonTest {
                                     bool is_inlined);
 
   // Compile and execute the given plan
-  codegen::QueryCompiler::CompileStats CompileAndExecute(
+  CodeGenStats CompileAndExecute(
       planner::AbstractPlan &plan, codegen::ExecutionConsumer &consumer);
 
-  codegen::QueryCompiler::CompileStats CompileAndExecuteCache(
+  CodeGenStats CompileAndExecuteCache(
       std::shared_ptr<planner::AbstractPlan> plan,
       codegen::ExecutionConsumer &consumer, bool &cached,
       std::vector<type::Value> params = {});

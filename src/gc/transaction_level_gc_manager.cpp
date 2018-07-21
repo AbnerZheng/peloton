@@ -29,20 +29,19 @@ namespace peloton {
 namespace gc {
 
 bool TransactionLevelGCManager::ResetTuple(const ItemPointer &location) {
-  auto &manager = catalog::Manager::GetInstance();
-  auto tile_group = manager.GetTileGroup(location.block).get();
+  auto storage_manager = storage::StorageManager::GetInstance();
+  auto tile_group = storage_manager->GetTileGroup(location.block).get();
 
   auto tile_group_header = tile_group->GetHeader();
 
   // Reset the header
   tile_group_header->SetTransactionId(location.offset, INVALID_TXN_ID);
+  tile_group_header->SetLastReaderCommitId(location.offset, INVALID_CID);
   tile_group_header->SetBeginCommitId(location.offset, MAX_CID);
   tile_group_header->SetEndCommitId(location.offset, MAX_CID);
-  tile_group_header->SetPrevItemPointer(location.offset, INVALID_ITEMPOINTER);
   tile_group_header->SetNextItemPointer(location.offset, INVALID_ITEMPOINTER);
-
-  PELOTON_MEMSET(tile_group_header->GetReservedFieldRef(location.offset), 0,
-                 storage::TileGroupHeader::GetReservedSize());
+  tile_group_header->SetPrevItemPointer(location.offset, INVALID_ITEMPOINTER);
+  tile_group_header->SetIndirection(location.offset, nullptr);
 
   // Reclaim the varlen pool
   CheckAndReclaimVarlenColumns(tile_group, location.offset);
@@ -215,8 +214,8 @@ int TransactionLevelGCManager::Reclaim(const int &thread_id,
 void TransactionLevelGCManager::AddToRecycleMap(
     concurrency::TransactionContext *txn_ctx) {
   for (auto &entry : *(txn_ctx->GetGCSetPtr().get())) {
-    auto &manager = catalog::Manager::GetInstance();
-    auto tile_group = manager.GetTileGroup(entry.first);
+    auto storage_manager = storage::StorageManager::GetInstance();
+    auto tile_group = storage_manager->GetTileGroup(entry.first);
 
     // During the resetting, a table may be deconstructed because of the DROP
     // TABLE request
@@ -336,7 +335,7 @@ void TransactionLevelGCManager::UnlinkVersion(const ItemPointer location,
                                               GCVersionType type) {
   // get indirection from the indirection array.
   auto tile_group =
-      catalog::Manager::GetInstance().GetTileGroup(location.block);
+      storage::StorageManager::GetInstance()->GetTileGroup(location.block);
 
   // if the corresponding tile group is deconstructed,
   // then do nothing.
@@ -345,7 +344,7 @@ void TransactionLevelGCManager::UnlinkVersion(const ItemPointer location,
   }
 
   auto tile_group_header =
-      catalog::Manager::GetInstance().GetTileGroup(location.block)->GetHeader();
+      storage::StorageManager::GetInstance()->GetTileGroup(location.block)->GetHeader();
 
   ItemPointer *indirection = tile_group_header->GetIndirection(location.offset);
 

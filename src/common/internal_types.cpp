@@ -1304,6 +1304,9 @@ std::string PlanNodeTypeToString(PlanNodeType type) {
     case PlanNodeType::INDEXSCAN: {
       return ("INDEXSCAN");
     }
+    case PlanNodeType::CSVSCAN: {
+      return ("CSVSCAN");
+    }
     case PlanNodeType::NESTLOOP: {
       return ("NESTLOOP");
     }
@@ -1379,9 +1382,6 @@ std::string PlanNodeTypeToString(PlanNodeType type) {
     case PlanNodeType::RESULT: {
       return ("RESULT");
     }
-    case PlanNodeType::COPY: {
-      return ("COPY");
-    }
     case PlanNodeType::MOCK: {
       return ("MOCK");
     }
@@ -1390,6 +1390,9 @@ std::string PlanNodeTypeToString(PlanNodeType type) {
     }
     case PlanNodeType::ANALYZE: {
       return ("ANALYZE");
+    }
+    case PlanNodeType::EXPORT_EXTERNAL_FILE: {
+      return ("EXPORT_EXTERNAL_FILE");
     }
     default: {
       throw ConversionException(
@@ -1408,6 +1411,8 @@ PlanNodeType StringToPlanNodeType(const std::string &str) {
     return PlanNodeType::SEQSCAN;
   } else if (upper_str == "INDEXSCAN") {
     return PlanNodeType::INDEXSCAN;
+  } else if (upper_str == "CSVSCAN") {
+    return PlanNodeType::CSVSCAN;
   } else if (upper_str == "NESTLOOP") {
     return PlanNodeType::NESTLOOP;
   } else if (upper_str == "NESTLOOPINDEX") {
@@ -1456,12 +1461,12 @@ PlanNodeType StringToPlanNodeType(const std::string &str) {
     return PlanNodeType::HASH;
   } else if (upper_str == "RESULT") {
     return PlanNodeType::RESULT;
-  } else if (upper_str == "COPY") {
-    return PlanNodeType::COPY;
   } else if (upper_str == "MOCK") {
     return PlanNodeType::MOCK;
   } else if (upper_str == "ANALYZE") {
     return PlanNodeType::ANALYZE;
+  } else if (upper_str == "EXPORT_EXTERNAL_FILE") {
+    return PlanNodeType::EXPORT_EXTERNAL_FILE;
   } else {
     throw ConversionException(StringUtil::Format(
         "No PlanNodeType conversion from string '%s'", upper_str.c_str()));
@@ -1878,6 +1883,32 @@ std::ostream &operator<<(std::ostream &os, const CopyType &type) {
 }
 
 //===--------------------------------------------------------------------===//
+// ExternalFileFormat - String Utilities
+//===--------------------------------------------------------------------===//
+
+std::string ExternalFileFormatToString(ExternalFileFormat format) {
+  switch (format) {
+    case ExternalFileFormat::CSV:
+    default:
+      return "CSV";
+  }
+}
+
+ExternalFileFormat StringToExternalFileFormat(const std::string &str) {
+  auto upper = StringUtil::Upper(str);
+  if (upper == "CSV") {
+    return ExternalFileFormat::CSV;
+  }
+  throw ConversionException(StringUtil::Format(
+      "No ExternalFileFormat for input '%s'", upper.c_str()));
+}
+
+std::ostream &operator<<(std::ostream &os, const ExternalFileFormat &format) {
+  os << ExternalFileFormatToString(format);
+  return os;
+}
+
+//===--------------------------------------------------------------------===//
 // PayloadType - String Utilities
 //===--------------------------------------------------------------------===//
 
@@ -2051,15 +2082,6 @@ std::string ConstraintTypeToString(ConstraintType type) {
     case ConstraintType::INVALID: {
       return ("INVALID");
     }
-    case ConstraintType::NOT_NULL: {
-      return ("NOT_NULL");
-    }
-    case ConstraintType::NOTNULL: {
-      return ("NOTNULL");
-    }
-    case ConstraintType::DEFAULT: {
-      return ("DEFAULT");
-    }
     case ConstraintType::CHECK: {
       return ("CHECK");
     }
@@ -2088,12 +2110,6 @@ ConstraintType StringToConstraintType(const std::string &str) {
   std::string upper_str = StringUtil::Upper(str);
   if (upper_str == "INVALID") {
     return ConstraintType::INVALID;
-  } else if (upper_str == "NOT_NULL") {
-    return ConstraintType::NOT_NULL;
-  } else if (upper_str == "NOTNULL") {
-    return ConstraintType::NOTNULL;
-  } else if (upper_str == "DEFAULT") {
-    return ConstraintType::DEFAULT;
   } else if (upper_str == "CHECK") {
     return ConstraintType::CHECK;
   } else if (upper_str == "PRIMARY") {
@@ -2113,6 +2129,67 @@ ConstraintType StringToConstraintType(const std::string &str) {
 
 std::ostream &operator<<(std::ostream &os, const ConstraintType &type) {
   os << ConstraintTypeToString(type);
+  return os;
+}
+
+//===--------------------------------------------------------------------===//
+// Foreign Key Action Type - String Utilities
+//===--------------------------------------------------------------------===//
+
+std::string FKConstrActionTypeToString(FKConstrActionType type) {
+  switch (type) {
+    case FKConstrActionType::INVALID: {
+      return ("INVALID");
+    }
+    case FKConstrActionType::NOACTION: {
+      return ("NOACTION");
+    }
+    case FKConstrActionType::RESTRICT: {
+      return ("RESTRICT");
+    }
+    case FKConstrActionType::CASCADE: {
+      return ("CASCADE");
+    }
+    case FKConstrActionType::SETNULL: {
+      return ("SETNULL");
+    }
+    case FKConstrActionType::SETDEFAULT: {
+      return ("SETDEFAULT");
+    }
+    default: {
+      throw ConversionException(StringUtil::Format(
+          "No string conversion for FKConstrActionType value '%d'",
+          static_cast<int>(type)));
+    }
+  }
+return "INVALID";
+}
+
+FKConstrActionType StringToFKConstrActionType(const std::string &str){
+  std::string upper_str = StringUtil::Upper(str);
+  if (upper_str == "INVALID") {
+      return FKConstrActionType::INVALID;
+  } else if (upper_str == "NOACTION") {
+    return FKConstrActionType::NOACTION;
+  } else if (upper_str == "RESTRICT") {
+    return FKConstrActionType::RESTRICT;
+  } else if (upper_str == "CASCADE") {
+    return FKConstrActionType::CASCADE;
+  } else if (upper_str == "SETNULL") {
+    return FKConstrActionType::SETNULL;
+  } else if (upper_str == "SETDEFAULT") {
+    return FKConstrActionType::SETDEFAULT;
+  } else {
+    throw ConversionException(StringUtil::Format(
+        "No FKConstrActionType conversion from string '%s'",
+        upper_str.c_str()));
+  }
+  return FKConstrActionType::INVALID;
+}
+
+
+std::ostream &operator<<(std::ostream &os, const FKConstrActionType &type) {
+  os << FKConstrActionTypeToString(type);
   return os;
 }
 
@@ -2751,18 +2828,6 @@ ConstraintType PostgresConstraintTypeToPelotonConstraintType(
   ConstraintType constraintType = ConstraintType::INVALID;
 
   switch (type) {
-    case PostgresConstraintType::NOT_NULL:
-      constraintType = ConstraintType::NOT_NULL;
-      break;
-
-    case PostgresConstraintType::NOTNULL:
-      constraintType = ConstraintType::NOTNULL;
-      break;
-
-    case PostgresConstraintType::DEFAULT:
-      constraintType = ConstraintType::DEFAULT;
-      break;
-
     case PostgresConstraintType::CHECK:
       constraintType = ConstraintType::CHECK;
       break;

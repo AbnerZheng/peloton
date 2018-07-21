@@ -165,15 +165,19 @@ unique_ptr<planner::AbstractPlan> Optimizer::HandleDDLStatement(
       if (create_plan->GetCreateType() == peloton::CreateType::INDEX) {
         auto create_stmt = (parser::CreateStatement *)tree;
         auto target_table = catalog::Catalog::GetInstance()->GetTableWithName(
-            create_stmt->GetDatabaseName(), create_stmt->GetSchemaName(),
-            create_stmt->GetTableName(), txn);
+            txn,
+            create_stmt->GetDatabaseName(),
+            create_stmt->GetSchemaName(),
+            create_stmt->GetTableName());
         std::vector<oid_t> column_ids;
         // use catalog object instead of schema to acquire metadata
-        auto table_object = catalog::Catalog::GetInstance()->GetTableObject(
-            create_stmt->GetDatabaseName(), create_stmt->GetSchemaName(),
-            create_stmt->GetTableName(), txn);
+        auto table_object =
+            catalog::Catalog::GetInstance()->GetTableCatalogEntry(txn,
+                                                                  create_stmt->GetDatabaseName(),
+                                                                  create_stmt->GetSchemaName(),
+                                                                  create_stmt->GetTableName());
         for (auto column_name : create_plan->GetIndexAttributes()) {
-          auto column_object = table_object->GetColumnObject(column_name);
+          auto column_object = table_object->GetColumnCatalogEntry(column_name);
           // Check if column is missing
           if (column_object == nullptr)
             throw CatalogException(
@@ -212,13 +216,6 @@ unique_ptr<planner::AbstractPlan> Optimizer::HandleDDLStatement(
       unique_ptr<planner::AbstractPlan> analyze_plan(new planner::AnalyzePlan(
           static_cast<parser::AnalyzeStatement *>(tree), txn));
       ddl_plan = move(analyze_plan);
-      break;
-    }
-    case StatementType::COPY: {
-      LOG_TRACE("Adding Copy plan...");
-      parser::CopyStatement *copy_parse_tree =
-          static_cast<parser::CopyStatement *>(tree);
-      ddl_plan = util::CreateCopyPlan(copy_parse_tree);
       break;
     }
     default:
@@ -266,24 +263,63 @@ QueryInfo Optimizer::GetQueryInfo(parser::SQLStatement *tree) {
   std::shared_ptr<PropertySet> physical_props = std::make_shared<PropertySet>();
   switch (tree->GetType()) {
     case StatementType::SELECT: {
-      auto select = reinterpret_cast<parser::SelectStatement *>(tree);
+      auto *select = reinterpret_cast<parser::SelectStatement *>(tree);
       GetQueryInfoHelper(select->select_list, select->order, output_exprs,
                          physical_props);
       break;
     }
     case StatementType::INSERT: {
-      auto insert = reinterpret_cast<parser::InsertStatement *>(tree);
+      auto *insert = reinterpret_cast<parser::InsertStatement *>(tree);
       if (insert->select != nullptr)
         GetQueryInfoHelper(insert->select->select_list, insert->select->order,
                            output_exprs, physical_props);
       break;
     }
+    case StatementType::COPY: {
+      auto *copy = reinterpret_cast<parser::CopyStatement *>(tree);
+      if (copy->select_stmt != nullptr) {
+        GetQueryInfoHelper(copy->select_stmt->select_list,
+                           copy->select_stmt->order, output_exprs,
+                           physical_props);
+      } else {
+        std::unique_ptr<parser::OrderDescription> order;
+        GetQueryInfoHelper(copy->select_list, order, output_exprs,
+                           physical_props);
+      }
+      break;
+    }
     default:
-      ;
+      break;
   }
 
   return QueryInfo(output_exprs, physical_props);
 }
+
+const std::string Optimizer::GetOperatorInfo(
+    GroupID id, std::shared_ptr<PropertySet> required_props,
+    int num_indent) {
+    std::ostringstream os;
+
+    Group *group = metadata_.memo.GetGroupByID(id);
+    auto gexpr = group->GetBestExpression(required_props);
+    
+    os << std::endl << StringUtil::Indent(num_indent) << "operator name: "
+       << gexpr->Op().GetName().c_str();
+
+    vector<GroupID> child_groups = gexpr->GetChildGroupIDs();
+    auto required_input_props = gexpr->GetInputProperties(required_props);
+    PELOTON_ASSERT(required_input_props.size() == child_groups.size());
+
+    for (size_t i = 0; i < child_groups.size(); ++i) {
+        auto child_info = 
+            GetOperatorInfo(child_groups[i], required_input_props[i],
+                num_indent + 2);
+        os << StringUtil::Indent(num_indent + 2)
+           << child_info;
+    }
+    return os.str();
+}
+
 
 unique_ptr<planner::AbstractPlan> Optimizer::ChooseBestPlan(
     GroupID id, std::shared_ptr<PropertySet> required_props,

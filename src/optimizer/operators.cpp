@@ -11,11 +11,13 @@
 //===----------------------------------------------------------------------===//
 
 #include "optimizer/operators.h"
+
 #include "optimizer/operator_visitor.h"
 #include "expression/expression_util.h"
 
 namespace peloton {
 namespace optimizer {
+
 //===--------------------------------------------------------------------===//
 // Leaf
 //===--------------------------------------------------------------------===//
@@ -30,7 +32,7 @@ Operator LeafOperator::make(GroupID group) {
 //===--------------------------------------------------------------------===//
 Operator LogicalGet::make(oid_t get_id,
                           std::vector<AnnotatedExpression> predicates,
-                          std::shared_ptr<catalog::TableCatalogObject> table,
+                          std::shared_ptr<catalog::TableCatalogEntry> table,
                           std::string alias, bool update) {
   LogicalGet *get = new LogicalGet;
   get->table = table;
@@ -51,7 +53,7 @@ hash_t LogicalGet::Hash() const {
 }
 
 bool LogicalGet::operator==(const BaseOperatorNode &r) {
-  if (r.GetType()!= OpType::Get) return false;
+  if (r.GetType() != OpType::Get) return false;
   const LogicalGet &node = *static_cast<const LogicalGet *>(&r);
   if (predicates.size() != node.predicates.size()) return false;
   for (size_t i = 0; i < predicates.size(); i++) {
@@ -59,6 +61,43 @@ bool LogicalGet::operator==(const BaseOperatorNode &r) {
       return false;
   }
   return get_id == node.get_id;
+}
+
+//===--------------------------------------------------------------------===//
+// External file get
+//===--------------------------------------------------------------------===//
+
+Operator LogicalExternalFileGet::make(oid_t get_id, ExternalFileFormat format,
+                                      std::string file_name, char delimiter,
+                                      char quote, char escape) {
+  auto *get = new LogicalExternalFileGet();
+  get->get_id = get_id;
+  get->format = format;
+  get->file_name = std::move(file_name);
+  get->delimiter = delimiter;
+  get->quote = quote;
+  get->escape = escape;
+  return Operator(get);
+}
+
+bool LogicalExternalFileGet::operator==(const BaseOperatorNode &node) {
+  if (node.GetType() != OpType::LogicalExternalFileGet) return false;
+  const auto &get = *static_cast<const LogicalExternalFileGet *>(&node);
+  return (get_id == get.get_id && format == get.format &&
+          file_name == get.file_name && delimiter == get.delimiter &&
+          quote == get.quote && escape == get.escape);
+}
+
+hash_t LogicalExternalFileGet::Hash() const {
+  hash_t hash = BaseOperatorNode::Hash();
+  hash = HashUtil::CombineHashes(hash, HashUtil::Hash(&get_id));
+  hash = HashUtil::CombineHashes(hash, HashUtil::Hash(&format));
+  hash = HashUtil::CombineHashes(
+      hash, HashUtil::HashBytes(file_name.data(), file_name.length()));
+  hash = HashUtil::CombineHashes(hash, HashUtil::HashBytes(&delimiter, 1));
+  hash = HashUtil::CombineHashes(hash, HashUtil::HashBytes(&quote, 1));
+  hash = HashUtil::CombineHashes(hash, HashUtil::HashBytes(&escape, 1));
+  return hash;
 }
 
 //===--------------------------------------------------------------------===//
@@ -352,7 +391,7 @@ hash_t LogicalAggregateAndGroupBy::Hash() const {
 // Insert
 //===--------------------------------------------------------------------===//
 Operator LogicalInsert::make(
-    std::shared_ptr<catalog::TableCatalogObject> target_table,
+    std::shared_ptr<catalog::TableCatalogEntry> target_table,
     const std::vector<std::string> *columns,
     const std::vector<std::vector<
         std::unique_ptr<peloton::expression::AbstractExpression>>> *values) {
@@ -364,7 +403,7 @@ Operator LogicalInsert::make(
 }
 
 Operator LogicalInsertSelect::make(
-    std::shared_ptr<catalog::TableCatalogObject> target_table) {
+    std::shared_ptr<catalog::TableCatalogEntry> target_table) {
   LogicalInsertSelect *insert_op = new LogicalInsertSelect;
   insert_op->target_table = target_table;
   return Operator(insert_op);
@@ -374,7 +413,7 @@ Operator LogicalInsertSelect::make(
 // Delete
 //===--------------------------------------------------------------------===//
 Operator LogicalDelete::make(
-    std::shared_ptr<catalog::TableCatalogObject> target_table) {
+    std::shared_ptr<catalog::TableCatalogEntry> target_table) {
   LogicalDelete *delete_op = new LogicalDelete;
   delete_op->target_table = target_table;
   return Operator(delete_op);
@@ -384,9 +423,9 @@ Operator LogicalDelete::make(
 // Update
 //===--------------------------------------------------------------------===//
 Operator LogicalUpdate::make(
-    std::shared_ptr<catalog::TableCatalogObject> target_table,
-    const std::vector<std::unique_ptr<peloton::parser::UpdateClause>>
-        *updates) {
+    std::shared_ptr<catalog::TableCatalogEntry> target_table,
+    const std::vector<std::unique_ptr<peloton::parser::UpdateClause>> *
+        updates) {
   LogicalUpdate *update_op = new LogicalUpdate;
   update_op->target_table = target_table;
   update_op->updates = updates;
@@ -404,11 +443,51 @@ Operator LogicalDistinct::make() {
 //===--------------------------------------------------------------------===//
 // Limit
 //===--------------------------------------------------------------------===//
-Operator LogicalLimit::make(int64_t offset, int64_t limit) {
+Operator LogicalLimit::make(
+    int64_t offset, int64_t limit,
+    std::vector<expression::AbstractExpression *> &&sort_exprs,
+    std::vector<bool> &&sort_ascending) {
   LogicalLimit *limit_op = new LogicalLimit;
   limit_op->offset = offset;
   limit_op->limit = limit;
+  limit_op->sort_exprs = std::move(sort_exprs);
+  limit_op->sort_ascending = std::move(sort_ascending);
   return Operator(limit_op);
+}
+
+//===--------------------------------------------------------------------===//
+// External file output
+//===--------------------------------------------------------------------===//
+Operator LogicalExportExternalFile::make(ExternalFileFormat format,
+                                         std::string file_name, char delimiter,
+                                         char quote, char escape) {
+  auto *export_op = new LogicalExportExternalFile();
+  export_op->format = format;
+  export_op->file_name = std::move(file_name);
+  export_op->delimiter = delimiter;
+  export_op->quote = quote;
+  export_op->escape = escape;
+  return Operator(export_op);
+}
+
+bool LogicalExportExternalFile::operator==(const BaseOperatorNode &node) {
+  if (node.GetType() != OpType::LogicalExportExternalFile) return false;
+  const auto &export_op =
+      *static_cast<const LogicalExportExternalFile *>(&node);
+  return (format == export_op.format && file_name == export_op.file_name &&
+          delimiter == export_op.delimiter && quote == export_op.quote &&
+          escape == export_op.escape);
+}
+
+hash_t LogicalExportExternalFile::Hash() const {
+  hash_t hash = BaseOperatorNode::Hash();
+  hash = HashUtil::CombineHashes(hash, HashUtil::Hash(&format));
+  hash = HashUtil::CombineHashes(
+      hash, HashUtil::HashBytes(file_name.data(), file_name.length()));
+  hash = HashUtil::CombineHashes(hash, HashUtil::HashBytes(&delimiter, 1));
+  hash = HashUtil::CombineHashes(hash, HashUtil::HashBytes(&quote, 1));
+  hash = HashUtil::CombineHashes(hash, HashUtil::HashBytes(&escape, 1));
+  return hash;
 }
 
 //===--------------------------------------------------------------------===//
@@ -423,7 +502,7 @@ Operator DummyScan::make() {
 // SeqScan
 //===--------------------------------------------------------------------===//
 Operator PhysicalSeqScan::make(
-    oid_t get_id, std::shared_ptr<catalog::TableCatalogObject> table,
+    oid_t get_id, std::shared_ptr<catalog::TableCatalogEntry> table,
     std::string alias, std::vector<AnnotatedExpression> predicates,
     bool update) {
   PELOTON_ASSERT(table != nullptr);
@@ -460,7 +539,7 @@ hash_t PhysicalSeqScan::Hash() const {
 // IndexScan
 //===--------------------------------------------------------------------===//
 Operator PhysicalIndexScan::make(
-    oid_t get_id, std::shared_ptr<catalog::TableCatalogObject> table,
+    oid_t get_id, std::shared_ptr<catalog::TableCatalogEntry> table,
     std::string alias, std::vector<AnnotatedExpression> predicates, bool update,
     oid_t index_id, std::vector<oid_t> key_column_id_list,
     std::vector<ExpressionType> expr_type_list,
@@ -507,6 +586,42 @@ hash_t PhysicalIndexScan::Hash() const {
 }
 
 //===--------------------------------------------------------------------===//
+// Physical external file scan
+//===--------------------------------------------------------------------===//
+Operator ExternalFileScan::make(oid_t get_id, ExternalFileFormat format,
+                                std::string file_name, char delimiter,
+                                char quote, char escape) {
+  auto *get = new ExternalFileScan();
+  get->get_id = get_id;
+  get->format = format;
+  get->file_name = file_name;
+  get->delimiter = delimiter;
+  get->quote = quote;
+  get->escape = escape;
+  return Operator(get);
+}
+
+bool ExternalFileScan::operator==(const BaseOperatorNode &node) {
+  if (node.GetType() != OpType::QueryDerivedScan) return false;
+  const auto &get = *static_cast<const ExternalFileScan *>(&node);
+  return (get_id == get.get_id && format == get.format &&
+          file_name == get.file_name && delimiter == get.delimiter &&
+          quote == get.quote && escape == get.escape);
+}
+
+hash_t ExternalFileScan::Hash() const {
+  hash_t hash = BaseOperatorNode::Hash();
+  hash = HashUtil::CombineHashes(hash, HashUtil::Hash(&get_id));
+  hash = HashUtil::CombineHashes(hash, HashUtil::Hash(&format));
+  hash = HashUtil::CombineHashes(
+      hash, HashUtil::HashBytes(file_name.data(), file_name.length()));
+  hash = HashUtil::CombineHashes(hash, HashUtil::HashBytes(&delimiter, 1));
+  hash = HashUtil::CombineHashes(hash, HashUtil::HashBytes(&quote, 1));
+  hash = HashUtil::CombineHashes(hash, HashUtil::HashBytes(&escape, 1));
+  return hash;
+}
+
+//===--------------------------------------------------------------------===//
 // Query derived get
 //===--------------------------------------------------------------------===//
 Operator QueryDerivedScan::make(
@@ -546,10 +661,15 @@ Operator PhysicalOrderBy::make() {
 //===--------------------------------------------------------------------===//
 // PhysicalLimit
 //===--------------------------------------------------------------------===//
-Operator PhysicalLimit::make(int64_t offset, int64_t limit) {
+Operator PhysicalLimit::make(
+    int64_t offset, int64_t limit,
+    std::vector<expression::AbstractExpression *> sort_exprs,
+    std::vector<bool> sort_ascending) {
   PhysicalLimit *limit_op = new PhysicalLimit;
   limit_op->offset = offset;
   limit_op->limit = limit;
+  limit_op->sort_exprs = sort_exprs;
+  limit_op->sort_acsending = sort_ascending;
   return Operator(limit_op);
 }
 
@@ -712,7 +832,7 @@ Operator PhysicalOuterHashJoin::make(
 // PhysicalInsert
 //===--------------------------------------------------------------------===//
 Operator PhysicalInsert::make(
-    std::shared_ptr<catalog::TableCatalogObject> target_table,
+    std::shared_ptr<catalog::TableCatalogEntry> target_table,
     const std::vector<std::string> *columns,
     const std::vector<std::vector<
         std::unique_ptr<peloton::expression::AbstractExpression>>> *values) {
@@ -727,7 +847,7 @@ Operator PhysicalInsert::make(
 // PhysicalInsertSelect
 //===--------------------------------------------------------------------===//
 Operator PhysicalInsertSelect::make(
-    std::shared_ptr<catalog::TableCatalogObject> target_table) {
+    std::shared_ptr<catalog::TableCatalogEntry> target_table) {
   PhysicalInsertSelect *insert_op = new PhysicalInsertSelect;
   insert_op->target_table = target_table;
   return Operator(insert_op);
@@ -737,7 +857,7 @@ Operator PhysicalInsertSelect::make(
 // PhysicalDelete
 //===--------------------------------------------------------------------===//
 Operator PhysicalDelete::make(
-    std::shared_ptr<catalog::TableCatalogObject> target_table) {
+    std::shared_ptr<catalog::TableCatalogEntry> target_table) {
   PhysicalDelete *delete_op = new PhysicalDelete;
   delete_op->target_table = target_table;
   return Operator(delete_op);
@@ -747,13 +867,48 @@ Operator PhysicalDelete::make(
 // PhysicalUpdate
 //===--------------------------------------------------------------------===//
 Operator PhysicalUpdate::make(
-    std::shared_ptr<catalog::TableCatalogObject> target_table,
-    const std::vector<std::unique_ptr<peloton::parser::UpdateClause>>
-        *updates) {
+    std::shared_ptr<catalog::TableCatalogEntry> target_table,
+    const std::vector<std::unique_ptr<peloton::parser::UpdateClause>> *
+        updates) {
   PhysicalUpdate *update = new PhysicalUpdate;
   update->target_table = target_table;
   update->updates = updates;
   return Operator(update);
+}
+
+//===--------------------------------------------------------------------===//
+// PhysicalExportExternalFile
+//===--------------------------------------------------------------------===//
+Operator PhysicalExportExternalFile::make(ExternalFileFormat format,
+                                          std::string file_name, char delimiter,
+                                          char quote, char escape) {
+  auto *export_op = new PhysicalExportExternalFile();
+  export_op->format = format;
+  export_op->file_name = file_name;
+  export_op->delimiter = delimiter;
+  export_op->quote = quote;
+  export_op->escape = escape;
+  return Operator(export_op);
+}
+
+bool PhysicalExportExternalFile::operator==(const BaseOperatorNode &node) {
+  if (node.GetType() != OpType::ExportExternalFile) return false;
+  const auto &export_op =
+      *static_cast<const PhysicalExportExternalFile *>(&node);
+  return (format == export_op.format && file_name == export_op.file_name &&
+          delimiter == export_op.delimiter && quote == export_op.quote &&
+          escape == export_op.escape);
+}
+
+hash_t PhysicalExportExternalFile::Hash() const {
+  hash_t hash = BaseOperatorNode::Hash();
+  hash = HashUtil::CombineHashes(hash, HashUtil::Hash(&format));
+  hash = HashUtil::CombineHashes(
+      hash, HashUtil::HashBytes(file_name.data(), file_name.length()));
+  hash = HashUtil::CombineHashes(hash, HashUtil::HashBytes(&delimiter, 1));
+  hash = HashUtil::CombineHashes(hash, HashUtil::HashBytes(&quote, 1));
+  hash = HashUtil::CombineHashes(hash, HashUtil::HashBytes(&escape, 1));
+  return hash;
 }
 
 //===--------------------------------------------------------------------===//
@@ -846,6 +1001,9 @@ std::string OperatorNode<LeafOperator>::name_ = "LeafOperator";
 template <>
 std::string OperatorNode<LogicalGet>::name_ = "LogicalGet";
 template <>
+std::string OperatorNode<LogicalExternalFileGet>::name_ =
+    "LogicalExternalFileGet";
+template <>
 std::string OperatorNode<LogicalQueryDerivedGet>::name_ =
     "LogicalQueryDerivedGet";
 template <>
@@ -884,11 +1042,16 @@ std::string OperatorNode<LogicalLimit>::name_ = "LogicalLimit";
 template <>
 std::string OperatorNode<LogicalDistinct>::name_ = "LogicalDistinct";
 template <>
+std::string OperatorNode<LogicalExportExternalFile>::name_ =
+    "LogicalExportExternalFile";
+template <>
 std::string OperatorNode<DummyScan>::name_ = "DummyScan";
 template <>
 std::string OperatorNode<PhysicalSeqScan>::name_ = "PhysicalSeqScan";
 template <>
 std::string OperatorNode<PhysicalIndexScan>::name_ = "PhysicalIndexScan";
+template <>
+std::string OperatorNode<ExternalFileScan>::name_ = "ExternalFileScan";
 template <>
 std::string OperatorNode<QueryDerivedScan>::name_ = "QueryDerivedScan";
 template <>
@@ -930,12 +1093,18 @@ template <>
 std::string OperatorNode<PhysicalDistinct>::name_ = "PhysicalDistinct";
 template <>
 std::string OperatorNode<PhysicalAggregate>::name_ = "PhysicalAggregate";
+template <>
+std::string OperatorNode<PhysicalExportExternalFile>::name_ =
+    "PhysicalExportExternalFile";
 
 //===--------------------------------------------------------------------===//
 template <>
 OpType OperatorNode<LeafOperator>::type_ = OpType::Leaf;
 template <>
 OpType OperatorNode<LogicalGet>::type_ = OpType::Get;
+template <>
+OpType OperatorNode<LogicalExternalFileGet>::type_ =
+    OpType::LogicalExternalFileGet;
 template <>
 OpType OperatorNode<LogicalQueryDerivedGet>::type_ =
     OpType::LogicalQueryDerivedGet;
@@ -975,11 +1144,17 @@ OpType OperatorNode<LogicalDistinct>::type_ = OpType::LogicalDistinct;
 template <>
 OpType OperatorNode<LogicalLimit>::type_ = OpType::LogicalLimit;
 template <>
+OpType OperatorNode<LogicalExportExternalFile>::type_ =
+    OpType::LogicalExportExternalFile;
+
+template <>
 OpType OperatorNode<DummyScan>::type_ = OpType::DummyScan;
 template <>
 OpType OperatorNode<PhysicalSeqScan>::type_ = OpType::SeqScan;
 template <>
 OpType OperatorNode<PhysicalIndexScan>::type_ = OpType::IndexScan;
+template <>
+OpType OperatorNode<ExternalFileScan>::type_ = OpType::ExternalFileScan;
 template <>
 OpType OperatorNode<QueryDerivedScan>::type_ = OpType::QueryDerivedScan;
 template <>
@@ -1018,7 +1193,11 @@ template <>
 OpType OperatorNode<PhysicalSortGroupBy>::type_ = OpType::SortGroupBy;
 template <>
 OpType OperatorNode<PhysicalAggregate>::type_ = OpType::Aggregate;
+template <>
+OpType OperatorNode<PhysicalExportExternalFile>::type_ =
+    OpType::ExportExternalFile;
 //===--------------------------------------------------------------------===//
+
 template <typename T>
 bool OperatorNode<T>::IsLogical() const {
   return type_ < OpType::LogicalPhysicalDelimiter;

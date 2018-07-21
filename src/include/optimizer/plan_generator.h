@@ -54,6 +54,8 @@ class PlanGenerator : public OperatorVisitor {
 
   void Visit(const PhysicalIndexScan *) override;
 
+  void Visit(const ExternalFileScan *) override;
+
   void Visit(const QueryDerivedScan *) override;
 
   void Visit(const PhysicalOrderBy *) override;
@@ -92,6 +94,8 @@ class PlanGenerator : public OperatorVisitor {
 
   void Visit(const PhysicalAggregate *) override;
 
+  void Visit(const PhysicalExportExternalFile *) override;
+
  private:
   /**
    * @brief Generate all tuple value expressions of a base table
@@ -105,7 +109,7 @@ class PlanGenerator : public OperatorVisitor {
    */
   std::vector<std::unique_ptr<expression::AbstractExpression>>
   GenerateTableTVExprs(const std::string &alias,
-                       std::shared_ptr<catalog::TableCatalogObject> table);
+                       std::shared_ptr<catalog::TableCatalogEntry> table);
 
   /**
    * @brief Generate the column oids vector for a scan plan
@@ -127,7 +131,7 @@ class PlanGenerator : public OperatorVisitor {
   std::unique_ptr<expression::AbstractExpression> GeneratePredicateForScan(
       const std::shared_ptr<expression::AbstractExpression> predicate_expr,
       const std::string &alias,
-      std::shared_ptr<catalog::TableCatalogObject> table);
+      std::shared_ptr<catalog::TableCatalogEntry> table);
 
   /**
    * @brief Generate projection info and projection schema for join

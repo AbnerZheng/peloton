@@ -23,7 +23,6 @@
 #include "storage/tile_group_header.h"
 #include "storage/tile.h"
 #include "storage/storage_manager.h"
-#include "catalog/foreign_key.h"
 
 namespace peloton {
 namespace executor {
@@ -119,7 +118,7 @@ bool UpdateExecutor::PerformUpdatePrimaryKey(
   }
 
   // Check the source table of any foreign key constraint
-  if (target_table_->GetForeignKeySrcCount() > 0) {
+  if (target_table_->GetSchema()->HasForeignKeySources()) {
     storage::Tuple prev_tuple(target_table_schema, true);
     // Get a copy of the old tuple
     for (oid_t column_itr = 0; column_itr < target_table_schema->GetColumnCount(); column_itr++) {
@@ -202,8 +201,8 @@ bool UpdateExecutor::DExecute() {
     if (current_txn->GetIsolationLevel() == IsolationLevelType::SNAPSHOT) {
       old_location = *(tile_group_header->GetIndirection(physical_tuple_id));
 
-      auto &manager = catalog::Manager::GetInstance();
-      tile_group = manager.GetTileGroup(old_location.block).get();
+      auto storage_manager = storage::StorageManager::GetInstance();
+      tile_group = storage_manager->GetTileGroup(old_location.block).get();
       tile_group_header = tile_group->GetHeader();
 
       physical_tuple_id = old_location.offset;
@@ -321,8 +320,8 @@ bool UpdateExecutor::DExecute() {
           // acquire a version slot from the table.
           ItemPointer new_location = target_table_->AcquireVersion();
 
-          auto &manager = catalog::Manager::GetInstance();
-          auto new_tile_group = manager.GetTileGroup(new_location.block);
+          auto storage_manager = storage::StorageManager::GetInstance();
+          auto new_tile_group = storage_manager->GetTileGroup(new_location.block);
 
           ContainerTuple<storage::TileGroup> new_tuple(new_tile_group.get(),
                                                        new_location.offset);

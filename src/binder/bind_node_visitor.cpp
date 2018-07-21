@@ -166,7 +166,19 @@ void BindNodeVisitor::Visit(parser::DeleteStatement *node) {
 }
 
 void BindNodeVisitor::Visit(parser::LimitDescription *) {}
-void BindNodeVisitor::Visit(parser::CopyStatement *) {}
+
+void BindNodeVisitor::Visit(parser::CopyStatement *node) {
+  context_ = std::make_shared<BinderContext>(nullptr);
+  if (node->table != nullptr) {
+    node->table->Accept(this);
+
+    // If the table is given, we're either writing or reading all columns
+    context_->GenerateAllColumnExpressions(node->select_list);
+  } else {
+    node->select_stmt->Accept(this);
+  }
+}
+
 void BindNodeVisitor::Visit(parser::CreateFunctionStatement *) {}
 void BindNodeVisitor::Visit(parser::CreateStatement *node) {
   node->TryBindDatabaseName(default_database_name_);
@@ -196,7 +208,7 @@ void BindNodeVisitor::Visit(parser::AnalyzeStatement *node) {
 void BindNodeVisitor::Visit(expression::TupleValueExpression *expr) {
   if (!expr->GetIsBound()) {
     std::tuple<oid_t, oid_t, oid_t> col_pos_tuple;
-    std::shared_ptr<catalog::TableCatalogObject> table_obj = nullptr;
+    std::shared_ptr<catalog::TableCatalogEntry> table_obj = nullptr;
     type::TypeId value_type;
     int depth = -1;
 

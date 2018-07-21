@@ -56,10 +56,10 @@ static void CompileAndExecutePlan(
   // Check if we have a cached compiled plan already
   codegen::Query *query = codegen::QueryCache::Instance().Find(plan);
   if (query == nullptr) {
-    // Cached plan doesn't exist, let's compile the query
     codegen::QueryCompiler compiler;
     auto compiled_query = compiler.Compile(
         *plan, executor_context.GetParams().GetQueryParametersMap(), consumer);
+    compiled_query->Compile();
 
     // Grab an instance to the plan
     query = compiled_query.get();
@@ -170,9 +170,9 @@ void PlanExecutor::ExecutePlan(
   } catch (Exception &e) {
     ExecutionResult result;
     result.m_result = ResultType::FAILURE;
-    result.m_error_message = e.what();
-    LOG_ERROR("Error thrown during execution: %s",
-              result.m_error_message.c_str());
+    result.m_error_message =
+        StringUtil::Format("ERROR:  during execution ['%s']", e.what());
+    LOG_ERROR("Error during execution: %s", e.what());
     on_complete(result, {});
   }
 }
@@ -339,7 +339,7 @@ executor::AbstractExecutor *BuildExecutorTree(
           new executor::CreateFunctionExecutor(plan, executor_context);
       break;
 
-    case PlanNodeType::COPY:
+    case PlanNodeType::EXPORT_EXTERNAL_FILE:
       child_executor = new executor::CopyExecutor(plan, executor_context);
       break;
 
@@ -349,9 +349,9 @@ executor::AbstractExecutor *BuildExecutorTree(
       break;
 
     default:
-      LOG_ERROR("Unsupported plan node type : %s",
-                PlanNodeTypeToString(plan_node_type).c_str());
-      break;
+      throw NotImplementedException{
+          StringUtil::Format("Unsupported plan node type : %s",
+                             PlanNodeTypeToString(plan_node_type).c_str())};
   }
   LOG_TRACE("Adding %s Executor", PlanNodeTypeToString(plan_node_type).c_str());
 

@@ -420,8 +420,10 @@ void TrafficCop::GetTableColumns(parser::TableRef *from_table,
       auto columns =
           static_cast<storage::DataTable *>(
               catalog::Catalog::GetInstance()->GetTableWithName(
-                  from_table->GetDatabaseName(), from_table->GetSchemaName(),
-                  from_table->GetTableName(), GetCurrentTxnState().first))
+                  GetCurrentTxnState().first,
+                  from_table->GetDatabaseName(),
+                  from_table->GetSchemaName(),
+                  from_table->GetTableName()))
               ->GetSchema()
               ->GetColumns();
       target_columns.insert(target_columns.end(), columns.begin(),
@@ -521,6 +523,11 @@ FieldInfo TrafficCop::GetColumnFieldForValueType(std::string column_name,
     case type::TypeId::VARBINARY: {
       field_type = PostgresValueType::TEXT;
       field_size = 255;
+      break;
+    }
+    case type::TypeId::DATE: {
+      field_type = PostgresValueType::DATE;
+      field_size = 4;
       break;
     }
     case type::TypeId::TIMESTAMP: {
